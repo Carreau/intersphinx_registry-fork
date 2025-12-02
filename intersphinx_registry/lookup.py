@@ -15,6 +15,17 @@ from sphinx.util.inventory import InventoryFile
 from . import get_intersphinx_mapping
 
 
+def _normalize_url_for_matching(url: str) -> str:
+    """
+    Normalize URL for fuzzy matching by removing version-specific segments.
+
+    This helps match URLs like:
+    - /stable/ vs /latest/ vs /main/
+    """
+    normalized = re.sub(r'/(latest|stable|main|dev|master)/', '/_VERSION_/', url)
+    return normalized
+
+
 def _do_reverse_lookup(
     urls: list[str],
 ) -> list[tuple[str, str, str | None, str | None, str | None]]:
@@ -44,7 +55,9 @@ def _do_reverse_lookup(
     registry = json.loads(registry_file.read_bytes())
 
     # Group URLs by package to avoid downloading inventories multiple times
+    # Also track URLs that might need fuzzy matching (same domain, different path)
     package_urls: dict[str, list[tuple[str, str, str | None]]] = {}
+    fuzzy_urls: list[tuple[str, str, str | None]] = []
 
     for url_str in urls:
         base_str = url_str
@@ -56,13 +69,31 @@ def _do_reverse_lookup(
         else:
             url_str_index = None
 
-        # Find the matching package (there can only be one due to unique base URLs)
+        # Try exact base URL match first
+        matched = False
         for package, (base_url, obj_path) in registry.items():
             if url_str.startswith(base_url):
                 package_urls.setdefault(package, []).append(
                     (base_str, url_str, url_str_index)
                 )
+                matched = True
                 break
+
+        # If no exact match, check if domain matches and path is similar after normalization
+        if not matched:
+            url_domain = urlparse(url_str).netloc
+            url_path_normalized = _normalize_url_for_matching(urlparse(url_str).path).rstrip('/').replace('/index.html', '')
+
+            for package, (base_url, obj_path) in registry.items():
+                base_domain = urlparse(base_url).netloc
+                if url_domain == base_domain:
+                    base_path_normalized = _normalize_url_for_matching(urlparse(base_url).path).rstrip('/')
+                    # Check if normalized paths share a common prefix (domain-level fuzzy match)
+                    if url_path_normalized.startswith(base_path_normalized) or base_path_normalized.startswith(url_path_normalized):
+                        package_urls.setdefault(package, []).append(
+                            (base_str, url_str, url_str_index)
+                        )
+                        break
 
     results: list[tuple[str, str, str | None, str | None, str | None]] = []
 
@@ -74,26 +105,50 @@ def _do_reverse_lookup(
         resp = requests.get(inv_url, timeout=25)
         inv = InventoryFile.load(BytesIO(resp.content), base_url, urljoin)
 
+        # Build a list of all URLs in the inventory for fuzzy matching
+        inv_urls = {}
+        inv_urls_normalized = {}
+        for key, v in inv.items():
+            for entry, item in v.items():
+                inv_urls[item.uri] = (key, entry, item.display_name)
+                normalized = _normalize_url_for_matching(item.uri)
+                inv_urls_normalized[normalized] = item.uri
+
         # Look up each URL for this package in the inventory
         for base_str, url_str, url_str_index in url_list:
             found = False
 
-            for key, v in inv.items():
-                for entry, item in v.items():
-                    if item.uri in (url_str, url_str_index):
-                        results.append(
-                            (
-                                base_str,
-                                package,
-                                key,
-                                entry,
-                                item.display_name,
-                            )
-                        )
-                        found = True
-                        break
-                if found:
+            # Try exact match first
+            for check_url in [url_str, url_str_index]:
+                if check_url and check_url in inv_urls:
+                    key, entry, display_name = inv_urls[check_url]
+                    results.append((base_str, package, key, entry, display_name))
+                    found = True
                     break
+
+            # If not found, try fuzzy matching with normalized URLs
+            if not found:
+                try:
+                    from rapidfuzz import process, fuzz
+
+                    normalized_query = _normalize_url_for_matching(url_str)
+
+                    # Find the best matching normalized URL
+                    best_match = process.extractOne(
+                        normalized_query,
+                        inv_urls_normalized.keys(),
+                        scorer=fuzz.ratio,
+                        score_cutoff=90,
+                    )
+
+                    if best_match:
+                        matched_normalized = best_match[0]
+                        matched_url = inv_urls_normalized[matched_normalized]
+                        key, entry, display_name = inv_urls[matched_url]
+                        results.append((base_str, package, key, entry, display_name))
+                        found = True
+                except ImportError:
+                    pass
 
             if not found:
                 results.append((url_str, package, None, None, None))
