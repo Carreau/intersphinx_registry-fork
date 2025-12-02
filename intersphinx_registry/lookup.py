@@ -44,7 +44,6 @@ def reverse_lookup(urls: list[str]):
     results: list[tuple[str, Any, str | None, str | None, str | None, Any | bool]] = []
 
     for url_str in urls:
-        matching_packages = []
         base_str = url_str
         if url_str.endswith("/index.html"):
             url_str_index = url_str
@@ -54,11 +53,15 @@ def reverse_lookup(urls: list[str]):
         else:
             url_str_index = None
 
+        # Find the matching package (there can only be one due to unique base URLs)
+        matching_package = None
         for package, (base_url, obj_path) in registry.items():
             if url_str.startswith(base_url):
-                matching_packages.append((package, base_url, obj_path))
+                matching_package = (package, base_url, obj_path)
+                break
 
-        for package, base_url, obj_path in matching_packages:
+        if matching_package:
+            package, base_url, obj_path = matching_package
             inv_url = urljoin(base_url, obj_path if obj_path else "objects.inv")
 
             resp = requests.get(inv_url, timeout=5)
