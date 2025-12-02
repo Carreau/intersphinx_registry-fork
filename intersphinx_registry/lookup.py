@@ -2,6 +2,7 @@ import json
 import os
 import re
 import sys
+import warnings
 from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
@@ -107,7 +108,11 @@ def _do_reverse_lookup(
             resp.raise_for_status()
             inv = InventoryFile.load(BytesIO(resp.content), base_url, urljoin)
         except Exception as e:
-            print(f"Warning: Failed to load inventory for '{package}' from {inv_url}: {e}", file=sys.stderr)
+            warnings.warn(
+                f"Failed to load inventory for '{package}' from {inv_url}: {e}",
+                UserWarning,
+                stacklevel=2
+            )
             # If inventory fails to load, mark all URLs from this package as not found
             for base_str, url_str, url_str_index in url_list:
                 results.append((url_str, package, None, None, None, False))
