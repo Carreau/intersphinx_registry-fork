@@ -4,10 +4,10 @@ This package provides convenient utilities and data to write a sphinx config fil
 
 from __future__ import annotations
 
-from pathlib import Path
 import json
 import warnings
-from typing import Tuple, Optional, cast
+from pathlib import Path
+from typing import Optional, Tuple, cast
 
 # See issue 4, we this the best format is Major.YYMM.day,
 # in case of multiple releases a day we can borrow the next day's date.
@@ -65,7 +65,7 @@ def get_intersphinx_mapping(
             warnings.warn(
                 f"Package alias '{pkg}' is deprecated. Use '{canonical}' instead.",
                 DeprecationWarning,
-                stacklevel=2
+                stacklevel=2,
             )
             resolved_packages.add(canonical)
         else:
