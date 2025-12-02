@@ -13,6 +13,117 @@ from typing import Any
 from . import get_intersphinx_mapping
 
 
+def _do_reverse_lookup(urls: list[str]) -> list[tuple[str, str, str | None, str | None, str | None]]:
+    """
+    Core reverse lookup logic: given URLs, find which packages they belong to and their rst references.
+
+    Parameters
+    ----------
+    urls : list[str]
+        List of URLs
+
+    Returns
+    -------
+    list[tuple[str, str, str | None, str | None, str | None]]
+        List of tuples: (url, package, domain, rst_entry, display_name)
+    """
+    requests_cache.install_cache(
+        "intersphinx_cache",
+        backend="filesystem",
+        expire_after=timedelta(hours=6),
+        use_cache_dir=True,
+        stale_if_error=True,
+        cache_control=True,
+    )
+
+    registry_file = Path(__file__).parent / "registry.json"
+    registry = json.loads(registry_file.read_bytes())
+
+    # Group URLs by package to avoid downloading inventories multiple times
+    package_urls: dict[str, list[tuple[str, str, str | None]]] = {}
+
+    for url_str in urls:
+        base_str = url_str
+        if url_str.endswith("/index.html"):
+            url_str_index = url_str
+            url_str = url_str[:-10]  # remove index.html, keep /
+        elif url_str.endswith("/"):
+            url_str_index = url_str + "index.html"
+        else:
+            url_str_index = None
+
+        # Find the matching package (there can only be one due to unique base URLs)
+        for package, (base_url, obj_path) in registry.items():
+            if url_str.startswith(base_url):
+                package_urls.setdefault(package, []).append((base_str, url_str, url_str_index))
+                break
+
+    results: list[tuple[str, str, str | None, str | None, str | None]] = []
+
+    # Process each package once, looking up all its URLs
+    for package, url_list in package_urls.items():
+        base_url, obj_path = registry[package]
+        inv_url = urljoin(base_url, obj_path if obj_path else "objects.inv")
+
+        resp = requests.get(inv_url, timeout=5)
+        inv = InventoryFile.load(BytesIO(resp.content), base_url, urljoin)
+
+        # Look up each URL for this package in the inventory
+        for base_str, url_str, url_str_index in url_list:
+            found = False
+
+            for key, v in inv.items():
+                for entry, item in v.items():
+                    if item.uri in (url_str, url_str_index):
+                        results.append(
+                            (
+                                base_str,
+                                package,
+                                key,
+                                entry,
+                                item.display_name,
+                            )
+                        )
+                        found = True
+                        break
+                if found:
+                    break
+
+            if not found:
+                results.append((url_str, package, None, None, None))
+
+    return results
+
+
+def _print_reverse_lookup_results(results: list[tuple[str, str, str | None, str | None, str | None]]):
+    """
+    Print formatted reverse lookup results.
+
+    Parameters
+    ----------
+    results : list[tuple[str, str, str | None, str | None, str | None]]
+        List of tuples: (url, package, domain, rst_entry, display_name)
+    """
+    if not results:
+        return
+
+    width_url = max(len(r[0]) for r in results)
+    width_rst = max((len(f":{r[1]}:`{r[3]}`") if r[3] else 7) for r in results)
+    width_display = max((len(r[4]) if r[4] else 0) for r in results)
+
+    for url_str, package, _key, rst_entry, display_name in results:
+        if rst_entry:
+            rst_ref = f":{package}:`{rst_entry}`"
+            display = (
+                display_name if display_name and display_name != "-" else rst_entry
+            )
+            print(
+                f"{url_str:<{width_url}}|  {rst_ref:<{width_rst}}  {display:<{width_display}}"
+            )
+        elif package:
+            print(f"{url_str:<{width_url}}|  NOT FOUND IN INVENTORY")
+
+
 def reverse_lookup(urls: list[str]):
     """
     Reverse lookup: given URLs, find which packages they belong to and their rst references.
@@ -29,98 +140,8 @@ def reverse_lookup(urls: list[str]):
     if not _are_dependencies_available():
         return
 
-    requests_cache.install_cache(
-        "intersphinx_cache",
-        backend="filesystem",
-        expire_after=timedelta(hours=6),
-        use_cache_dir=True,
-        stale_if_error=True,
-        cache_control=True,
-    )
-
-    registry_file = Path(__file__).parent / "registry.json"
-    registry = json.loads(registry_file.read_bytes())
-
-    # Group URLs by package to avoid downloading inventories multiple times
-    # Track index to preserve original order
-    package_urls: dict[str, list[tuple[str, str, str | None, int]]] = {}
-
-    for idx, url_str in enumerate(urls):
-        base_str = url_str
-        if url_str.endswith("/index.html"):
-            url_str_index = url_str
-            url_str = url_str[:-10]  # remove index.html, keep /
-        elif url_str.endswith("/"):
-            url_str_index = url_str + "index.html"
-        else:
-            url_str_index = None
-
-        # Find the matching package (there can only be one due to unique base URLs)
-        for package, (base_url, obj_path) in registry.items():
-            if url_str.startswith(base_url):
-                if package not in package_urls:
-                    package_urls[package] = []
-                package_urls[package].append((base_str, url_str, url_str_index, idx))
-                break
-
-    # Download inventories and build lookup results indexed by original position
-    results_dict: dict[int, tuple[str, Any, str | None, str | None, str | None, Any | bool]] = {}
-
-    # Process each package once, looking up all its URLs
-    for package, url_list in package_urls.items():
-        base_url, obj_path = registry[package]
-        inv_url = urljoin(base_url, obj_path if obj_path else "objects.inv")
-
-        resp = requests.get(inv_url, timeout=5)
-        cache_hit = getattr(resp, "from_cache", False)
-        inv = InventoryFile.load(BytesIO(resp.content), base_url, urljoin)
-
-        # Look up each URL for this package in the inventory
-        for base_str, url_str, url_str_index, idx in url_list:
-            found = False
-
-            for key, v in inv.items():
-                for entry, item in v.items():
-                    if item.uri in (url_str, url_str_index):
-                        results_dict[idx] = (
-                            base_str,
-                            package,
-                            key,
-                            entry,
-                            item.display_name,
-                            cache_hit,
-                        )
-                        found = True
-                        break
-                if found:
-                    break
-
-            if not found:
-                results_dict[idx] = (url_str, package, None, None, None, cache_hit)
-
-    # Reconstruct results in original order
-    results = [results_dict[i] for i in sorted(results_dict.keys())]
-
-    width_url = max(len(r[0]) for r in results) if results else 0
-    width_rst = (
-        max((len(f":{r[1]}:`{r[3]}`") if r[3] else 7) for r in results)
-        if results
-        else 0
-    )
-    width_display = max((len(r[4]) if r[4] else 0) for r in results) if results else 0
-
-    for url_str, package, _key, rst_entry, display_name, cache_hit in results:
-        cache_status = "(cache hit)" if cache_hit else ""
-        if rst_entry:
-            rst_ref = f":{package}:`{rst_entry}`"
-            display = (
-                display_name if display_name and display_name != "-" else rst_entry
-            )
-            print(
-                f"{url_str:<{width_url}}|  {rst_ref:<{width_rst}}  {display:<{width_display}}  {cache_status}"
-            )
-        elif package:
-            print(f"{url_str:<{width_url}}|  NOT FOUND IN INVENTORY  {cache_status}")
+    results = _do_reverse_lookup(urls)
+    _print_reverse_lookup_results(results)
 
 
 def clear_cache() -> None:
