@@ -1,4 +1,6 @@
 import json
+import os
+import re
 import sys
 from datetime import timedelta
 from io import BytesIO
@@ -119,9 +121,7 @@ def _print_reverse_lookup_results(
     header_display = "Description"
 
     # Calculate column widths (including headers)
-    width_url = max(
-        len(header_url), max(len(r[0]) for r in results)
-    )
+    width_url = max(len(header_url), max(len(r[0]) for r in results))
     width_rst = max(
         len(header_rst),
         max(
@@ -184,13 +184,8 @@ def rev_search(directory: str):
     if not _are_dependencies_available():
         return
 
-    import re
-    from pathlib import Path
-
-    # Regex to find URLs in rst files
     url_pattern = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
 
-    # Find all .rst files
     rst_files = list(Path(directory).rglob("*.rst"))
     if not rst_files:
         print(f"No .rst files found in {directory}")
@@ -232,22 +227,17 @@ def rev_search(directory: str):
         print("No URLs found that can be replaced with Sphinx references")
         return
 
-    # Print results with aligned columns
-    # First, collect all data with formatted location strings
-    import os
-    from pathlib import Path
-
     home = str(Path.home())
     output_rows = []
     for url, package, domain_role, rst_entry, display_name, locations in replaceable:
         rst_ref = f":{domain_role}:`{package}:{rst_entry}`"
         for filepath, line_num in locations:
-            # Replace home directory with ~
-            display_path = filepath.replace(home, "~") if filepath.startswith(home) else filepath
+            display_path = (
+                filepath.replace(home, "~") if filepath.startswith(home) else filepath
+            )
             location = f"{display_path}:{line_num}"
             output_rows.append((location, url, rst_ref))
 
-    # Calculate column widths
     header_location = "Location"
     header_url = "URL"
     header_ref = "Sphinx Reference"
@@ -256,11 +246,11 @@ def rev_search(directory: str):
     width_url = max(len(header_url), max(len(row[1]) for row in output_rows))
     width_ref = max(len(header_ref), max(len(row[2]) for row in output_rows))
 
-    # Print header
-    print(f"{header_location:<{width_location}}  {header_url:<{width_url}}  {header_ref}")
+    print(
+        f"{header_location:<{width_location}}  {header_url:<{width_url}}  {header_ref}"
+    )
     print(f"{'-' * width_location}  {'-' * width_url}  {'-' * width_ref}")
 
-    # Print rows
     for location, url, rst_ref in output_rows:
         print(f"{location:<{width_location}}  {url:<{width_url}}  {rst_ref}")
 
