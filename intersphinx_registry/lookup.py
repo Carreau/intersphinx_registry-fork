@@ -147,13 +147,34 @@ def _do_reverse_lookup(
 
                     normalized_query = _normalize_url_for_matching(url_str)
 
-                    # Find the best matching normalized URL
+                    # Try multiple fuzzy matching strategies, from most lenient to least
+                    best_match = None
+
+                    # Strategy 1: partial_ratio (most lenient - checks if one string is substring of other)
                     best_match = process.extractOne(
                         normalized_query,
                         inv_urls_normalized.keys(),
-                        scorer=fuzz.ratio,
-                        score_cutoff=90,
+                        scorer=fuzz.partial_ratio,
+                        score_cutoff=70,
                     )
+
+                    # Strategy 2: token_sort_ratio (good for reordered words)
+                    if not best_match:
+                        best_match = process.extractOne(
+                            normalized_query,
+                            inv_urls_normalized.keys(),
+                            scorer=fuzz.token_sort_ratio,
+                            score_cutoff=60,
+                        )
+
+                    # Strategy 3: ratio (standard comparison, very lenient cutoff)
+                    if not best_match:
+                        best_match = process.extractOne(
+                            normalized_query,
+                            inv_urls_normalized.keys(),
+                            scorer=fuzz.ratio,
+                            score_cutoff=50,
+                        )
 
                     if best_match:
                         matched_normalized = best_match[0]
@@ -264,7 +285,13 @@ def rev_search(directory: str):
     RESET = "\033[0m"
 
     # Process files one by one to avoid memory issues
-    for rst_file in Path(directory).rglob("*.rst"):
+    directory_path = Path(directory)
+    if directory_path.is_file():
+        rst_files = [directory_path] if directory_path.suffix == ".rst" else []
+    else:
+        rst_files = directory_path.rglob("*.rst")
+
+    for rst_file in rst_files:
         url_locations: dict[str, list[tuple[int, str]]] = {}
 
         try:
@@ -316,14 +343,51 @@ def rev_search(directory: str):
                     print(f"     {RED}- {original_line}{RESET}")
                     print(f"     {GREEN}+ {original_line.replace(url, rst_ref)}{RESET}")
                 else:
-                    # Split line into parts: before URL, URL, after URL
                     before = original_line[:url_pos]
                     after = original_line[url_pos + len(url):]
 
+                    # Detect context and generate smart replacement
+                    replacement = rst_ref
+                    original_text = url
+
+                    # Check if URL is in a RST link: `text <url>`_
+                    link_match = re.search(r'`([^`<>]+)\s*<' + re.escape(url) + r'>`_', original_line)
+                    if link_match:
+                        # Preserve the link text, just replace URL with rst_ref
+                        link_text = link_match.group(1).strip()
+                        original_text = link_match.group(0)
+                        replacement = f"`{link_text} <{rst_ref}>`_"
+                        url_pos = original_line.find(original_text)
+                        before = original_line[:url_pos]
+                        after = original_line[url_pos + len(original_text):]
+
+                    # Check if URL is preceded by '<' but we didn't match the full link pattern
+                    # This means it's in some link-like context, so just replace the URL
+                    elif before and before[-1] == '<':
+                        replacement = rst_ref
+
+                    # Check if URL is inside a role (like :ref:`url` or :doc:`url`)
+                    elif re.search(r':\w+:`[^`]*' + re.escape(url), original_line):
+                        # Inside a role, just replace the URL
+                        replacement = rst_ref
+
+                    # Check if line contains a RST directive (.. directive::)
+                    elif re.search(r'\.\.\s+\w+::', original_line):
+                        # For directive lines like ".. seealso:: url", just replace URL
+                        replacement = rst_ref
+
+                    # Check if URL is bare in text (not in link syntax)
+                    else:
+                        # Use display name if available, otherwise use the entry name
+                        if display_name and display_name != "-":
+                            replacement = f"`{display_name} <{rst_ref}>`_"
+                        else:
+                            replacement = f"`{rst_entry} <{rst_ref}>`_"
+
                     # Print original line: full line in red, with red background on the URL
-                    print(f"     {RED}- {before}{RED_BG}{url}{RESET}{RED}{after}{RESET}")
+                    print(f"     {RED}- {before}{RED_BG}{original_text}{RESET}{RED}{after}{RESET}")
                     # Print suggested line: full line in green, with green background on the replacement
-                    print(f"     {GREEN}+ {before}{GREEN_BG}{rst_ref}{RESET}{GREEN}{after}{RESET}")
+                    print(f"     {GREEN}+ {before}{GREEN_BG}{replacement}{RESET}{GREEN}{after}{RESET}")
                 print()
 
     if not found_any:
