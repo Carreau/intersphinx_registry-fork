@@ -113,10 +113,31 @@ def _print_reverse_lookup_results(
     if not results:
         return
 
-    width_url = max(len(r[0]) for r in results)
-    width_rst = max((len(f":{r[2]}:`{r[1]}:{r[3]}`") if r[3] else 7) for r in results)
-    width_display = max((len(r[4]) if r[4] else 0) for r in results)
+    # Column headers
+    header_url = "URL"
+    header_rst = "Sphinx Reference"
+    header_display = "Description"
 
+    # Calculate column widths (including headers)
+    width_url = max(
+        len(header_url), max(len(r[0]) for r in results)
+    )
+    width_rst = max(
+        len(header_rst),
+        max(
+            (len(f":{r[2]}:`{r[1]}:{r[3]}`") if r[3] else len("NOT FOUND"))
+            for r in results
+        ),
+    )
+    width_display = max(
+        len(header_display), max((len(r[4]) if r[4] else 0) for r in results)
+    )
+
+    # Print header
+    print(f"{header_url:<{width_url}}  {header_rst:<{width_rst}}  {header_display}")
+    print(f"{'-' * width_url}  {'-' * width_rst}  {'-' * width_display}")
+
+    # Print results
     for url_str, package, domain_role, rst_entry, display_name in results:
         if rst_entry:
             # Use the full domain:role format (e.g., :py:func:, :py:mod:, etc.)
@@ -128,7 +149,7 @@ def _print_reverse_lookup_results(
                 f"{url_str:<{width_url}}  {rst_ref:<{width_rst}}  {display:<{width_display}}"
             )
         elif package:
-            print(f"{url_str:<{width_url}}  NOT FOUND IN INVENTORY")
+            print(f"{url_str:<{width_url}}  {'NOT FOUND':<{width_rst}}")
 
 
 def reverse_lookup(urls: list[str]):
