@@ -255,17 +255,26 @@ def rev_search(directory: str):
     home = str(Path.home())
     found_any = False
 
+    # ANSI color codes
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    CYAN = "\033[36m"
+    RED_BG = "\033[41;37m"  # Red background with white foreground
+    GREEN_BG = "\033[42;30m"  # Green background with black foreground
+    RESET = "\033[0m"
+
     # Process files one by one to avoid memory issues
     for rst_file in Path(directory).rglob("*.rst"):
-        url_locations: dict[str, list[int]] = {}
+        url_locations: dict[str, list[tuple[int, str]]] = {}
 
         try:
             with open(rst_file, "r", encoding="utf-8") as f:
-                for line_num, line in enumerate(f, start=1):
+                lines = f.readlines()
+                for line_num, line in enumerate(lines, start=1):
                     urls = url_pattern.findall(line)
                     for url in urls:
                         url = url.rstrip(".,;:!?)")
-                        url_locations.setdefault(url, []).append(line_num)
+                        url_locations.setdefault(url, []).append((line_num, line.rstrip()))
         except Exception as e:
             print(f"Error reading {rst_file}: {e}")
             continue
@@ -290,35 +299,32 @@ def rev_search(directory: str):
         if not found_any:
             found_any = True
 
-        # Build output rows for this file
-        output_rows = []
-        for url, package, domain_role, rst_entry, display_name, is_fuzzy, line_nums in replaceable:
+        filepath = str(rst_file)
+        display_path = filepath.replace(home, "~") if filepath.startswith(home) else filepath
+
+        # Print results for this file in diff format
+        for url, package, domain_role, rst_entry, display_name, is_fuzzy, line_infos in replaceable:
             rst_ref = f":{domain_role}:`{package}:{rst_entry}`"
-            if is_fuzzy:
-                rst_ref += " ~"
 
-            filepath = str(rst_file)
-            display_path = filepath.replace(home, "~") if filepath.startswith(home) else filepath
+            for line_num, original_line in line_infos:
+                print(f"{CYAN}{display_path}:{line_num}{RESET}")
 
-            for line_num in line_nums:
-                location = f"{display_path}:{line_num}"
-                output_rows.append((location, url, rst_ref))
+                # Find the position of the URL in the line
+                url_pos = original_line.find(url)
+                if url_pos == -1:
+                    # Fallback if URL not found exactly (shouldn't happen)
+                    print(f"     {RED}- {original_line}{RESET}")
+                    print(f"     {GREEN}+ {original_line.replace(url, rst_ref)}{RESET}")
+                else:
+                    # Split line into parts: before URL, URL, after URL
+                    before = original_line[:url_pos]
+                    after = original_line[url_pos + len(url):]
 
-        # Print results for this file with headers
-        header_location = "Location"
-        header_url = "URL"
-        header_ref = "Sphinx Reference"
-
-        width_location = max(len(header_location), max(len(row[0]) for row in output_rows))
-        width_url = max(len(header_url), max(len(row[1]) for row in output_rows))
-        width_ref = max(len(header_ref), max(len(row[2]) for row in output_rows))
-
-        print(f"{header_location:<{width_location}}  {header_url:<{width_url}}  {header_ref}")
-        print(f"{'-' * width_location}  {'-' * width_url}  {'-' * width_ref}")
-
-        for location, url, rst_ref in output_rows:
-            print(f"{location:<{width_location}}  {url:<{width_url}}  {rst_ref}")
-        print()
+                    # Print original line: full line in red, with red background on the URL
+                    print(f"     {RED}- {before}{RED_BG}{url}{RESET}{RED}{after}{RESET}")
+                    # Print suggested line: full line in green, with green background on the replacement
+                    print(f"     {GREEN}+ {before}{GREEN_BG}{rst_ref}{RESET}{GREEN}{after}{RESET}")
+                print()
 
     if not found_any:
         print("No URLs found that can be replaced with Sphinx references")
