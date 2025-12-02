@@ -1,8 +1,10 @@
-from intersphinx_registry import _get_all_mappings, get_intersphinx_mapping, _ALIASES
+import warnings
 from urllib.parse import urljoin
+
 import pytest
 import requests
-import warnings
+
+from intersphinx_registry import _ALIASES, _get_all_mappings, get_intersphinx_mapping
 
 MAPPING = _get_all_mappings()
 keys = set(MAPPING)
@@ -115,4 +117,6 @@ def test_canonical_packages_exist():
     Test that all canonical packages referenced by aliases exist in the registry.
     """
     for alias, canonical in _ALIASES.items():
-        assert canonical in MAPPING, f"Canonical package '{canonical}' for alias '{alias}' not found in registry"
+        assert canonical in MAPPING, (
+            f"Canonical package '{canonical}' for alias '{alias}' not found in registry"
+        )

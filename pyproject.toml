@@ -32,5 +32,11 @@ xfail_strict = true
 [tool.mypy]
 files = ["intersphinx_registry", "tests"]
 
+[tool.ruff.lint]
+extend-select = ["I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["intersphinx_registry"]
+
 [project.urls]
 Home = "https://github.com/Quansight-labs/intersphinx_registry"

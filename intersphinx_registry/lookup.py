@@ -1,19 +1,21 @@
 import json
 import sys
+from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urljoin, urlparse
-from datetime import timedelta
+
 import requests
 import requests_cache
 from sphinx.util.inventory import InventoryFile
-from typing import Any
 
 from . import get_intersphinx_mapping
 
 
-def _do_reverse_lookup(urls: list[str]) -> list[tuple[str, str, str | None, str | None, str | None]]:
+def _do_reverse_lookup(
+    urls: list[str],
+) -> list[tuple[str, str, str | None, str | None, str | None]]:
     """
     Core reverse lookup logic: given URLs, find which packages they belong to and their rst references.
 
@@ -55,7 +57,9 @@ def _do_reverse_lookup(urls: list[str]) -> list[tuple[str, str, str | None, str 
         # Find the matching package (there can only be one due to unique base URLs)
         for package, (base_url, obj_path) in registry.items():
             if url_str.startswith(base_url):
-                package_urls.setdefault(package, []).append((base_str, url_str, url_str_index))
+                package_urls.setdefault(package, []).append(
+                    (base_str, url_str, url_str_index)
+                )
                 break
 
     results: list[tuple[str, str, str | None, str | None, str | None]] = []
@@ -95,7 +99,9 @@ def _do_reverse_lookup(urls: list[str]) -> list[tuple[str, str, str | None, str 
     return results
 
 
-def _print_reverse_lookup_results(results: list[tuple[str, str, str | None, str | None, str | None]]):
+def _print_reverse_lookup_results(
+    results: list[tuple[str, str, str | None, str | None, str | None]],
+):
     """
     Print formatted reverse lookup results.
 
@@ -211,9 +217,9 @@ def lookup_packages(packages_str: str, search_term: Optional[str] = None):
     if not _are_dependencies_available():
         return
 
-    from sphinx.util.inventory import InventoryFile
     import requests
     import requests_cache
+    from sphinx.util.inventory import InventoryFile
 
     packages = set(packages_str.split(","))
 

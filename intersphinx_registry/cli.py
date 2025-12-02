@@ -4,9 +4,9 @@ import sys
 from intersphinx_registry import __version__
 from intersphinx_registry.lookup import (
     _are_dependencies_available,
+    clear_cache,
     lookup_packages,
     reverse_lookup,
-    clear_cache,
 )
 
 
