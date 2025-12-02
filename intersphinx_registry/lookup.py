@@ -102,8 +102,16 @@ def _do_reverse_lookup(
         base_url, obj_path = registry[package]
         inv_url = urljoin(base_url, obj_path if obj_path else "objects.inv")
 
-        resp = requests.get(inv_url, timeout=25)
-        inv = InventoryFile.load(BytesIO(resp.content), base_url, urljoin)
+        try:
+            resp = requests.get(inv_url, timeout=25)
+            resp.raise_for_status()
+            inv = InventoryFile.load(BytesIO(resp.content), base_url, urljoin)
+        except Exception as e:
+            print(f"Warning: Failed to load inventory for '{package}' from {inv_url}: {e}", file=sys.stderr)
+            # If inventory fails to load, mark all URLs from this package as not found
+            for base_str, url_str, url_str_index in url_list:
+                results.append((url_str, package, None, None, None, False))
+            continue
 
         # Build a list of all URLs in the inventory for fuzzy matching
         inv_urls = {}
@@ -239,75 +247,76 @@ def rev_search(directory: str):
 
     url_pattern = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
 
-    rst_files = list(Path(directory).rglob("*.rst"))
-    if not rst_files:
-        print(f"No .rst files found in {directory}")
-        return
+    home = str(Path.home())
+    found_any = False
 
-    # Collect all URLs with their locations
-    url_locations: dict[str, list[tuple[str, int]]] = {}
+    # Process files one by one to avoid memory issues
+    for rst_file in Path(directory).rglob("*.rst"):
+        url_locations: dict[str, list[int]] = {}
 
-    for rst_file in rst_files:
         try:
             with open(rst_file, "r", encoding="utf-8") as f:
                 for line_num, line in enumerate(f, start=1):
                     urls = url_pattern.findall(line)
                     for url in urls:
-                        # Clean up trailing punctuation that might not be part of URL
                         url = url.rstrip(".,;:!?)")
-                        if url not in url_locations:
-                            url_locations[url] = []
-                        url_locations[url].append((str(rst_file), line_num))
+                        url_locations.setdefault(url, []).append(line_num)
         except Exception as e:
             print(f"Error reading {rst_file}: {e}")
+            continue
 
-    if not url_locations:
-        print("No URLs found in .rst files")
-        return
+        if not url_locations:
+            continue
 
-    # Do reverse lookup on all found URLs
-    urls = list(url_locations.keys())
-    results = _do_reverse_lookup(urls)
+        # Do reverse lookup for URLs in this file
+        urls = list(url_locations.keys())
+        results = _do_reverse_lookup(urls)
 
-    # Filter to only URLs that were found in inventories
-    replaceable = [
-        (url, package, domain_role, rst_entry, display_name, is_fuzzy, url_locations[url])
-        for url, package, domain_role, rst_entry, display_name, is_fuzzy in results
-        if rst_entry is not None
-    ]
+        # Filter to only URLs that were found in inventories
+        replaceable = [
+            (url, package, domain_role, rst_entry, display_name, is_fuzzy, url_locations[url])
+            for url, package, domain_role, rst_entry, display_name, is_fuzzy in results
+            if rst_entry is not None
+        ]
 
-    if not replaceable:
+        if not replaceable:
+            continue
+
+        if not found_any:
+            found_any = True
+
+        # Build output rows for this file
+        output_rows = []
+        for url, package, domain_role, rst_entry, display_name, is_fuzzy, line_nums in replaceable:
+            rst_ref = f":{domain_role}:`{package}:{rst_entry}`"
+            if is_fuzzy:
+                rst_ref += " ~"
+
+            filepath = str(rst_file)
+            display_path = filepath.replace(home, "~") if filepath.startswith(home) else filepath
+
+            for line_num in line_nums:
+                location = f"{display_path}:{line_num}"
+                output_rows.append((location, url, rst_ref))
+
+        # Print results for this file with headers
+        header_location = "Location"
+        header_url = "URL"
+        header_ref = "Sphinx Reference"
+
+        width_location = max(len(header_location), max(len(row[0]) for row in output_rows))
+        width_url = max(len(header_url), max(len(row[1]) for row in output_rows))
+        width_ref = max(len(header_ref), max(len(row[2]) for row in output_rows))
+
+        print(f"{header_location:<{width_location}}  {header_url:<{width_url}}  {header_ref}")
+        print(f"{'-' * width_location}  {'-' * width_url}  {'-' * width_ref}")
+
+        for location, url, rst_ref in output_rows:
+            print(f"{location:<{width_location}}  {url:<{width_url}}  {rst_ref}")
+        print()
+
+    if not found_any:
         print("No URLs found that can be replaced with Sphinx references")
-        return
-
-    home = str(Path.home())
-    output_rows = []
-    for url, package, domain_role, rst_entry, display_name, is_fuzzy, locations in replaceable:
-        rst_ref = f":{domain_role}:`{package}:{rst_entry}`"
-        if is_fuzzy:
-            rst_ref += " ~"
-        for filepath, line_num in locations:
-            display_path = (
-                filepath.replace(home, "~") if filepath.startswith(home) else filepath
-            )
-            location = f"{display_path}:{line_num}"
-            output_rows.append((location, url, rst_ref))
-
-    header_location = "Location"
-    header_url = "URL"
-    header_ref = "Sphinx Reference"
-
-    width_location = max(len(header_location), max(len(row[0]) for row in output_rows))
-    width_url = max(len(header_url), max(len(row[1]) for row in output_rows))
-    width_ref = max(len(header_ref), max(len(row[2]) for row in output_rows))
-
-    print(
-        f"{header_location:<{width_location}}  {header_url:<{width_url}}  {header_ref}"
-    )
-    print(f"{'-' * width_location}  {'-' * width_url}  {'-' * width_ref}")
-
-    for location, url, rst_ref in output_rows:
-        print(f"{location:<{width_location}}  {url:<{width_url}}  {rst_ref}")
 
 
 def clear_cache() -> None:
