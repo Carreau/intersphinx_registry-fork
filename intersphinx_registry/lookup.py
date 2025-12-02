@@ -41,9 +41,11 @@ def reverse_lookup(urls: list[str]):
     registry_file = Path(__file__).parent / "registry.json"
     registry = json.loads(registry_file.read_bytes())
 
-    results: list[tuple[str, Any, str | None, str | None, str | None, Any | bool]] = []
+    # Group URLs by package to avoid downloading inventories multiple times
+    # Track index to preserve original order
+    package_urls: dict[str, list[tuple[str, str, str | None, int]]] = {}
 
-    for url_str in urls:
+    for idx, url_str in enumerate(urls):
         base_str = url_str
         if url_str.endswith("/index.html"):
             url_str_index = url_str
@@ -54,34 +56,39 @@ def reverse_lookup(urls: list[str]):
             url_str_index = None
 
         # Find the matching package (there can only be one due to unique base URLs)
-        matching_package = None
         for package, (base_url, obj_path) in registry.items():
             if url_str.startswith(base_url):
-                matching_package = (package, base_url, obj_path)
+                if package not in package_urls:
+                    package_urls[package] = []
+                package_urls[package].append((base_str, url_str, url_str_index, idx))
                 break
 
-        if matching_package:
-            package, base_url, obj_path = matching_package
-            inv_url = urljoin(base_url, obj_path if obj_path else "objects.inv")
+    # Download inventories and build lookup results indexed by original position
+    results_dict: dict[int, tuple[str, Any, str | None, str | None, str | None, Any | bool]] = {}
 
-            resp = requests.get(inv_url, timeout=5)
-            cache_hit = getattr(resp, "from_cache", False)
-            inv = InventoryFile.load(BytesIO(resp.content), base_url, urljoin)
+    # Process each package once, looking up all its URLs
+    for package, url_list in package_urls.items():
+        base_url, obj_path = registry[package]
+        inv_url = urljoin(base_url, obj_path if obj_path else "objects.inv")
 
+        resp = requests.get(inv_url, timeout=5)
+        cache_hit = getattr(resp, "from_cache", False)
+        inv = InventoryFile.load(BytesIO(resp.content), base_url, urljoin)
+
+        # Look up each URL for this package in the inventory
+        for base_str, url_str, url_str_index, idx in url_list:
             found = False
 
             for key, v in inv.items():
                 for entry, item in v.items():
                     if item.uri in (url_str, url_str_index):
-                        results.append(
-                            (
-                                base_str,
-                                package,
-                                key,
-                                entry,
-                                item.display_name,
-                                cache_hit,
-                            )
+                        results_dict[idx] = (
+                            base_str,
+                            package,
+                            key,
+                            entry,
+                            item.display_name,
+                            cache_hit,
                         )
                         found = True
                         break
@@ -89,7 +96,10 @@ def reverse_lookup(urls: list[str]):
                     break
 
             if not found:
-                results.append((url_str, package, None, None, None, cache_hit))
+                results_dict[idx] = (url_str, package, None, None, None, cache_hit)
+
+    # Reconstruct results in original order
+    results = [results_dict[i] for i in sorted(results_dict.keys())]
 
     width_url = max(len(r[0]) for r in results) if results else 0
     width_rst = (
