@@ -28,7 +28,7 @@ def _normalize_url_for_matching(url: str) -> str:
 
 def _do_reverse_lookup(
     urls: list[str],
-) -> list[tuple[str, str, str | None, str | None, str | None]]:
+) -> list[tuple[str, str, str | None, str | None, str | None, bool]]:
     """
     Core reverse lookup logic: given URLs, find which packages they belong to and their rst references.
 
@@ -39,8 +39,8 @@ def _do_reverse_lookup(
 
     Returns
     -------
-    list[tuple[str, str, str | None, str | None, str | None]]
-        List of tuples: (url, package, domain, rst_entry, display_name)
+    list[tuple[str, str, str | None, str | None, str | None, bool]]
+        List of tuples: (url, package, domain, rst_entry, display_name, is_fuzzy_match)
     """
     requests_cache.install_cache(
         "intersphinx_cache",
@@ -95,7 +95,7 @@ def _do_reverse_lookup(
                         )
                         break
 
-    results: list[tuple[str, str, str | None, str | None, str | None]] = []
+    results: list[tuple[str, str, str | None, str | None, str | None, bool]] = []
 
     # Process each package once, looking up all its URLs
     for package, url_list in package_urls.items():
@@ -117,12 +117,13 @@ def _do_reverse_lookup(
         # Look up each URL for this package in the inventory
         for base_str, url_str, url_str_index in url_list:
             found = False
+            is_fuzzy = False
 
             # Try exact match first
             for check_url in [url_str, url_str_index]:
                 if check_url and check_url in inv_urls:
                     key, entry, display_name = inv_urls[check_url]
-                    results.append((base_str, package, key, entry, display_name))
+                    results.append((base_str, package, key, entry, display_name, False))
                     found = True
                     break
 
@@ -145,42 +146,40 @@ def _do_reverse_lookup(
                         matched_normalized = best_match[0]
                         matched_url = inv_urls_normalized[matched_normalized]
                         key, entry, display_name = inv_urls[matched_url]
-                        results.append((base_str, package, key, entry, display_name))
+                        results.append((base_str, package, key, entry, display_name, True))
                         found = True
                 except ImportError:
                     pass
 
             if not found:
-                results.append((url_str, package, None, None, None))
+                results.append((url_str, package, None, None, None, False))
 
     return results
 
 
 def _print_reverse_lookup_results(
-    results: list[tuple[str, str, str | None, str | None, str | None]],
+    results: list[tuple[str, str, str | None, str | None, str | None, bool]],
 ):
     """
     Print formatted reverse lookup results.
 
     Parameters
     ----------
-    results : list[tuple[str, str, str | None, str | None, str | None]]
-        List of tuples: (url, package, domain, rst_entry, display_name)
+    results : list[tuple[str, str, str | None, str | None, str | None, bool]]
+        List of tuples: (url, package, domain, rst_entry, display_name, is_fuzzy)
     """
     if not results:
         return
 
-    # Column headers
     header_url = "URL"
     header_rst = "Sphinx Reference"
     header_display = "Description"
 
-    # Calculate column widths (including headers)
     width_url = max(len(header_url), max(len(r[0]) for r in results))
     width_rst = max(
         len(header_rst),
         max(
-            (len(f":{r[2]}:`{r[1]}:{r[3]}`") if r[3] else len("NOT FOUND"))
+            (len(f":{r[2]}:`{r[1]}:{r[3]}`") + (3 if r[5] else 0) if r[3] else len("NOT FOUND"))
             for r in results
         ),
     )
@@ -188,15 +187,14 @@ def _print_reverse_lookup_results(
         len(header_display), max((len(r[4]) if r[4] else 0) for r in results)
     )
 
-    # Print header
     print(f"{header_url:<{width_url}}  {header_rst:<{width_rst}}  {header_display}")
     print(f"{'-' * width_url}  {'-' * width_rst}  {'-' * width_display}")
 
-    # Print results
-    for url_str, package, domain_role, rst_entry, display_name in results:
+    for url_str, package, domain_role, rst_entry, display_name, is_fuzzy in results:
         if rst_entry:
-            # Use the full domain:role format (e.g., :py:func:, :py:mod:, etc.)
             rst_ref = f":{domain_role}:`{package}:{rst_entry}`"
+            if is_fuzzy:
+                rst_ref += " ~"
             display = (
                 display_name if display_name and display_name != "-" else rst_entry
             )
@@ -273,8 +271,8 @@ def rev_search(directory: str):
 
     # Filter to only URLs that were found in inventories
     replaceable = [
-        (url, package, domain_role, rst_entry, display_name, url_locations[url])
-        for url, package, domain_role, rst_entry, display_name in results
+        (url, package, domain_role, rst_entry, display_name, is_fuzzy, url_locations[url])
+        for url, package, domain_role, rst_entry, display_name, is_fuzzy in results
         if rst_entry is not None
     ]
 
@@ -284,8 +282,10 @@ def rev_search(directory: str):
 
     home = str(Path.home())
     output_rows = []
-    for url, package, domain_role, rst_entry, display_name, locations in replaceable:
+    for url, package, domain_role, rst_entry, display_name, is_fuzzy, locations in replaceable:
         rst_ref = f":{domain_role}:`{package}:{rst_entry}`"
+        if is_fuzzy:
+            rst_ref += " ~"
         for filepath, line_num in locations:
             display_path = (
                 filepath.replace(home, "~") if filepath.startswith(home) else filepath
