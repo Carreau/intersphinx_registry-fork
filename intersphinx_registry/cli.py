@@ -6,6 +6,7 @@ from intersphinx_registry.lookup import (
     _are_dependencies_available,
     clear_cache,
     lookup_packages,
+    rev_search,
     reverse_lookup,
 )
 
@@ -37,6 +38,17 @@ def reverse_lookup_command(args):
         sys.exit(0)
 
     reverse_lookup(args.urls)
+
+
+def rev_search_command(args):
+    if not args.directory:
+        print("Usage: intersphinx-registry rev-search <directory>\n")
+        print("Examples:")
+        print("  intersphinx-registry rev-search docs/")
+        print("  intersphinx-registry rev-search .")
+        sys.exit(0)
+
+    rev_search(args.directory)
 
 
 def clear_cache_command(args):
@@ -109,6 +121,19 @@ def main():
         help="URLs to look up (space-separated)",
     )
     rev_parser.set_defaults(func=reverse_lookup_command)
+
+    rev_search_parser = subparsers.add_parser(
+        "rev-search",
+        help="Search .rst files for URLs that can be replaced with Sphinx references",
+        description="Scan directory for .rst files and find URLs that can be replaced",
+    )
+    rev_search_parser.add_argument(
+        "directory",
+        nargs="?",
+        default=None,
+        help="Directory to search for .rst files",
+    )
+    rev_search_parser.set_defaults(func=rev_search_command)
 
     clear_cache_parser = subparsers.add_parser(
         "clear-cache",

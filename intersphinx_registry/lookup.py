@@ -69,7 +69,7 @@ def _do_reverse_lookup(
         base_url, obj_path = registry[package]
         inv_url = urljoin(base_url, obj_path if obj_path else "objects.inv")
 
-        resp = requests.get(inv_url, timeout=5)
+        resp = requests.get(inv_url, timeout=25)
         inv = InventoryFile.load(BytesIO(resp.content), base_url, urljoin)
 
         # Look up each URL for this package in the inventory
@@ -170,6 +170,99 @@ def reverse_lookup(urls: list[str]):
 
     results = _do_reverse_lookup(urls)
     _print_reverse_lookup_results(results)
+
+
+def rev_search(directory: str):
+    """
+    Search for URLs in .rst files that can be replaced with Sphinx references.
+
+    Parameters
+    ----------
+    directory : str
+        Directory to search for .rst files
+    """
+    if not _are_dependencies_available():
+        return
+
+    import re
+    from pathlib import Path
+
+    # Regex to find URLs in rst files
+    url_pattern = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
+
+    # Find all .rst files
+    rst_files = list(Path(directory).rglob("*.rst"))
+    if not rst_files:
+        print(f"No .rst files found in {directory}")
+        return
+
+    # Collect all URLs with their locations
+    url_locations: dict[str, list[tuple[str, int]]] = {}
+
+    for rst_file in rst_files:
+        try:
+            with open(rst_file, "r", encoding="utf-8") as f:
+                for line_num, line in enumerate(f, start=1):
+                    urls = url_pattern.findall(line)
+                    for url in urls:
+                        # Clean up trailing punctuation that might not be part of URL
+                        url = url.rstrip(".,;:!?)")
+                        if url not in url_locations:
+                            url_locations[url] = []
+                        url_locations[url].append((str(rst_file), line_num))
+        except Exception as e:
+            print(f"Error reading {rst_file}: {e}")
+
+    if not url_locations:
+        print("No URLs found in .rst files")
+        return
+
+    # Do reverse lookup on all found URLs
+    urls = list(url_locations.keys())
+    results = _do_reverse_lookup(urls)
+
+    # Filter to only URLs that were found in inventories
+    replaceable = [
+        (url, package, domain_role, rst_entry, display_name, url_locations[url])
+        for url, package, domain_role, rst_entry, display_name in results
+        if rst_entry is not None
+    ]
+
+    if not replaceable:
+        print("No URLs found that can be replaced with Sphinx references")
+        return
+
+    # Print results with aligned columns
+    # First, collect all data with formatted location strings
+    import os
+    from pathlib import Path
+
+    home = str(Path.home())
+    output_rows = []
+    for url, package, domain_role, rst_entry, display_name, locations in replaceable:
+        rst_ref = f":{domain_role}:`{package}:{rst_entry}`"
+        for filepath, line_num in locations:
+            # Replace home directory with ~
+            display_path = filepath.replace(home, "~") if filepath.startswith(home) else filepath
+            location = f"{display_path}:{line_num}"
+            output_rows.append((location, url, rst_ref))
+
+    # Calculate column widths
+    header_location = "Location"
+    header_url = "URL"
+    header_ref = "Sphinx Reference"
+
+    width_location = max(len(header_location), max(len(row[0]) for row in output_rows))
+    width_url = max(len(header_url), max(len(row[1]) for row in output_rows))
+    width_ref = max(len(header_ref), max(len(row[2]) for row in output_rows))
+
+    # Print header
+    print(f"{header_location:<{width_location}}  {header_url:<{width_url}}  {header_ref}")
+    print(f"{'-' * width_location}  {'-' * width_url}  {'-' * width_ref}")
+
+    # Print rows
+    for location, url, rst_ref in output_rows:
+        print(f"{location:<{width_location}}  {url:<{width_url}}  {rst_ref}")
 
 
 def clear_cache() -> None:
