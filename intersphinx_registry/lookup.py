@@ -108,20 +108,21 @@ def _print_reverse_lookup_results(results: list[tuple[str, str, str | None, str 
         return
 
     width_url = max(len(r[0]) for r in results)
-    width_rst = max((len(f":{r[1]}:`{r[3]}`") if r[3] else 7) for r in results)
+    width_rst = max((len(f":{r[2]}:`{r[1]}:{r[3]}`") if r[3] else 7) for r in results)
     width_display = max((len(r[4]) if r[4] else 0) for r in results)
 
-    for url_str, package, _key, rst_entry, display_name in results:
+    for url_str, package, domain_role, rst_entry, display_name in results:
         if rst_entry:
-            rst_ref = f":{package}:`{rst_entry}`"
+            # Use the full domain:role format (e.g., :py:func:, :py:mod:, etc.)
+            rst_ref = f":{domain_role}:`{package}:{rst_entry}`"
             display = (
                 display_name if display_name and display_name != "-" else rst_entry
             )
             print(
-                f"{url_str:<{width_url}}|  {rst_ref:<{width_rst}}  {display:<{width_display}}"
+                f"{url_str:<{width_url}}  {rst_ref:<{width_rst}}  {display:<{width_display}}"
             )
         elif package:
-            print(f"{url_str:<{width_url}}|  NOT FOUND IN INVENTORY")
+            print(f"{url_str:<{width_url}}  NOT FOUND IN INVENTORY")
 
 
 def reverse_lookup(urls: list[str]):
