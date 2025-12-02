@@ -8,6 +8,7 @@ from datetime import timedelta
 import requests
 import requests_cache
 from sphinx.util.inventory import InventoryFile
+from typing import Any
 
 from . import get_intersphinx_mapping
 
@@ -40,7 +41,7 @@ def reverse_lookup(urls: list[str]):
     registry_file = Path(__file__).parent / "registry.json"
     registry = json.loads(registry_file.read_bytes())
 
-    results = []
+    results: list[tuple[str, Any, str | None, str | None, str | None, Any | bool]] = []
 
     for url_str in urls:
         matching_packages = []
@@ -57,40 +58,35 @@ def reverse_lookup(urls: list[str]):
             if url_str.startswith(base_url):
                 matching_packages.append((package, base_url, obj_path))
 
-        if matching_packages:
-            matching_packages.sort(key=lambda x: -len(x[1]))
-            for package, base_url, obj_path in matching_packages:
-                inv_url = urljoin(base_url, obj_path if obj_path else "objects.inv")
+        for package, base_url, obj_path in matching_packages:
+            inv_url = urljoin(base_url, obj_path if obj_path else "objects.inv")
 
-                resp = requests.get(inv_url)
-                cache_hit = getattr(resp, "from_cache", False)
-                inv = InventoryFile.load(BytesIO(resp.content), base_url, urljoin)
+            resp = requests.get(inv_url, timeout=5)
+            cache_hit = getattr(resp, "from_cache", False)
+            inv = InventoryFile.load(BytesIO(resp.content), base_url, urljoin)
 
-                found = False
+            found = False
 
-                for key, v in inv.items():
-                    for entry, item in v.items():
-                        if item.uri in (url_str, url_str_index):
-                            results.append(
-                                (
-                                    base_str,
-                                    package,
-                                    key,
-                                    entry,
-                                    item.display_name,
-                                    cache_hit,
-                                )
+            for key, v in inv.items():
+                for entry, item in v.items():
+                    if item.uri in (url_str, url_str_index):
+                        results.append(
+                            (
+                                base_str,
+                                package,
+                                key,
+                                entry,
+                                item.display_name,
+                                cache_hit,
                             )
-                            found = True
-                            break
-                    if found:
+                        )
+                        found = True
                         break
+                if found:
+                    break
 
-                if not found:
-                    results.append((url_str, package, None, None, None, cache_hit))
-
-        # else:
-        #   results.append((url_str, None, None, None, None, False))
+            if not found:
+                results.append((url_str, package, None, None, None, cache_hit))
 
     width_url = max(len(r[0]) for r in results) if results else 0
     width_rst = (
@@ -100,18 +96,18 @@ def reverse_lookup(urls: list[str]):
     )
     width_display = max((len(r[4]) if r[4] else 0) for r in results) if results else 0
 
-    for url_str, package, key, entry, display_name, cache_hit in results:
+    for url_str, package, _key, rst_entry, display_name, cache_hit in results:
         cache_status = "(cache hit)" if cache_hit else ""
-        if entry:
-            rst_ref = f":{package}:`{entry}`"
-            display = display_name if display_name and display_name != "-" else entry
+        if rst_entry:
+            rst_ref = f":{package}:`{rst_entry}`"
+            display = (
+                display_name if display_name and display_name != "-" else rst_entry
+            )
             print(
                 f"{url_str:<{width_url}}|  {rst_ref:<{width_rst}}  {display:<{width_display}}  {cache_status}"
             )
         elif package:
             print(f"{url_str:<{width_url}}|  NOT FOUND IN INVENTORY  {cache_status}")
-        # else:
-        #    print(f"{url_str:<{width_url}}|  PACKAGE NOT FOUND")
 
 
 def clear_cache() -> None:
