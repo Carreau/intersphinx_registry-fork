@@ -105,8 +105,10 @@ def _normalize_url_for_matching(url: str) -> str:
 
     This helps match URLs like:
     - /stable/ vs /latest/ vs /main/
+    - /v1.2.3/ vs /v2.0/ vs /1.5/
     """
     normalized = re.sub(r"/(latest|stable|main|dev|master)/", "/_VERSION_/", url)
+    normalized = re.sub(r"/v?\d+(\.\d+)*/", "/_VERSION_/", normalized)
     return normalized
 
 
@@ -400,10 +402,22 @@ def rev_search(directory: str):
                     link_match = re.search(
                         r"`([^`<>]+)\s*<" + re.escape(url) + r">`_", original_line
                     )
+                    simple_link_match = re.search(
+                        r"<" + re.escape(url) + r">`_", original_line
+                    )
                     if link_match:
                         link_text = link_match.group(1).strip()
                         original_text = link_match.group(0)
                         replacement = f"`{link_text} <{rst_ref}>`_"
+                        url_pos = original_line.find(original_text)
+                        before = original_line[:url_pos]
+                        after = original_line[url_pos + len(original_text) :]
+                    elif simple_link_match:
+                        original_text = simple_link_match.group(0)
+                        if display_name and display_name != "-":
+                            replacement = f"`{display_name} <{rst_ref}>`_"
+                        else:
+                            replacement = f"`{rst_entry} <{rst_ref}>`_"
                         url_pos = original_line.find(original_text)
                         before = original_line[:url_pos]
                         after = original_line[url_pos + len(original_text) :]
