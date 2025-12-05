@@ -5,7 +5,6 @@ This package provides convenient utilities and data to write a sphinx config fil
 from __future__ import annotations
 
 import json
-import warnings
 from pathlib import Path
 from typing import Optional, Tuple, cast
 
@@ -16,12 +15,6 @@ version_info = (0, 2511, 25)
 __version__ = ".".join(map(str, version_info))
 
 registry_file = Path(__file__).parent / "registry.json"
-
-# Mapping of removed aliases to their canonical package names
-_ALIASES = {
-    "rtd": "readthedocs",
-    "server": "jupyter-server",
-}
 
 
 def _get_all_mappings() -> dict[str, tuple[str, str | None]]:
@@ -56,24 +49,9 @@ def get_intersphinx_mapping(
         )
 
     mapping = _get_all_mappings()
-
-    # Check for aliases and replace them with canonical names
-    resolved_packages = set()
-    for pkg in packages:
-        if pkg in _ALIASES:
-            canonical = _ALIASES[pkg]
-            warnings.warn(
-                f"Package alias '{pkg}' is deprecated. Use '{canonical}' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            resolved_packages.add(canonical)
-        else:
-            resolved_packages.add(pkg)
-
-    missing = resolved_packages - set(mapping)
+    missing = set(packages) - set(mapping)
     if missing:
         raise ValueError(
             f"Some libraries in 'packages' not found in registry: {repr(sorted(missing))}"
         )
-    return {k: v for k, v in mapping.items() if k in resolved_packages}
+    return {k: v for k, v in mapping.items() if k in packages}
