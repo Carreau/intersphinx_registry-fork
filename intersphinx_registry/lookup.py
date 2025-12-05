@@ -23,6 +23,11 @@ ReverseLookupResult = namedtuple(
     ["url", "package", "domain", "rst_entry", "display_name", "is_fuzzy_match"],
 )
 
+UrlReplacement = namedtuple(
+    "UrlReplacement",
+    ["filepath", "line_num", "original_line", "replacement_line", "context_before", "context_after"],
+)
+
 
 def _compress_user_path(path: str) -> str:
     """
@@ -299,28 +304,84 @@ def reverse_lookup(urls: list[str]):
     _print_reverse_lookup_results(results)
 
 
-def rev_search(directory: str):
+def _compute_replacement(
+    original_line: str, url: str, rst_ref: str, display_name: str, rst_entry: str
+) -> str:
     """
-    Search for URLs in .rst files that can be replaced with Sphinx references.
+    Compute the replacement line for a URL in an RST file.
+
+    Parameters
+    ----------
+    original_line : str
+        The original line containing the URL
+    url : str
+        The URL to replace
+    rst_ref : str
+        The RST reference to replace with (e.g., :py:module:`python:os`)
+    display_name : str
+        Display name from intersphinx inventory
+    rst_entry : str
+        The entry name from intersphinx
+
+    Returns
+    -------
+    str
+        The replacement line
+    """
+    url_pos = original_line.find(url)
+    if url_pos == -1:
+        return original_line.replace(url, rst_ref)
+
+    before = original_line[:url_pos]
+    after = original_line[url_pos + len(url) :]
+
+    replacement = rst_ref
+    original_text = url
+
+    link_match = re.search(r"`([^`<>]+)\s*<" + re.escape(url) + r">`_", original_line)
+    simple_link_match = re.search(r"<" + re.escape(url) + r">`_", original_line)
+
+    if link_match:
+        link_text = link_match.group(1).strip()
+        original_text = link_match.group(0)
+        replacement = f"`{link_text} <{rst_ref}>`_"
+        url_pos = original_line.find(original_text)
+        before = original_line[:url_pos]
+        after = original_line[url_pos + len(original_text) :]
+    elif simple_link_match:
+        original_text = simple_link_match.group(0)
+        replacement = f"`{rst_entry} <{rst_ref}>`_"
+        url_pos = original_line.find(original_text)
+        before = original_line[:url_pos]
+        after = original_line[url_pos + len(original_text) :]
+    elif before and before[-1] == "<":
+        replacement = rst_ref
+    elif re.search(r":\w+:`[^`]*" + re.escape(url), original_line):
+        replacement = rst_ref
+    elif re.search(r"\.\.\s+\w+::", original_line):
+        replacement = rst_ref
+    else:
+        replacement = f"`{rst_entry} <{rst_ref}>`_"
+
+    return before + replacement + after
+
+
+def _find_url_replacements(directory: str):
+    """
+    Find all URLs in RST files that can be replaced with Sphinx references.
 
     Parameters
     ----------
     directory : str
         Directory to search for .rst files
+
+    Yields
+    ------
+    UrlReplacement
+        UrlReplacement namedtuples containing:
+        filepath, line_num, original_line, replacement_line
     """
-    if not _are_dependencies_available():
-        return
-
     url_pattern = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
-
-    found_any = False
-
-    RED = "\033[31m"
-    GREEN = "\033[32m"
-    CYAN = "\033[36m"
-    RED_BG = "\033[41;37m"
-    GREEN_BG = "\033[42;30m"
-    RESET = "\033[0m"
 
     directory_path = Path(directory)
     if directory_path.is_file():
@@ -330,19 +391,19 @@ def rev_search(directory: str):
 
     for rst_file in rst_files:
         url_locations: dict[str, list[tuple[int, str]]] = {}
+        all_lines = []
 
         try:
             with open(rst_file, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-                for line_num, line in enumerate(lines, start=1):
+                all_lines = f.readlines()
+                for line_num, line in enumerate(all_lines, start=1):
                     urls = url_pattern.findall(line)
                     for url in urls:
                         url = url.rstrip(".,;:!?)")
                         url_locations.setdefault(url, []).append(
                             (line_num, line.rstrip())
                         )
-        except Exception as e:
-            print(f"Error reading {rst_file}: {e}")
+        except Exception:
             continue
 
         if not url_locations:
@@ -358,7 +419,6 @@ def rev_search(directory: str):
                 result.domain,
                 result.rst_entry,
                 result.display_name,
-                result.is_fuzzy_match,
                 url_locations[result.url],
             )
             for result in results
@@ -368,11 +428,7 @@ def rev_search(directory: str):
         if not replaceable:
             continue
 
-        if not found_any:
-            found_any = True
-
         filepath = str(rst_file)
-        display_path = _compress_user_path(filepath)
 
         for (
             url,
@@ -380,66 +436,135 @@ def rev_search(directory: str):
             domain_role,
             rst_entry,
             display_name,
-            is_fuzzy,
             line_infos,
         ) in replaceable:
             rst_ref = f":{domain_role}:`{package}:{rst_entry}`"
 
             for line_num, original_line in line_infos:
-                print(f"{CYAN}{display_path}:{line_num}{RESET}")
+                replacement_line = _compute_replacement(
+                    original_line, url, rst_ref, display_name, rst_entry
+                )
 
-                url_pos = original_line.find(url)
-                if url_pos == -1:
-                    print(f"     {RED}- {original_line}{RESET}")
-                    print(f"     {GREEN}+ {original_line.replace(url, rst_ref)}{RESET}")
+                # Get context lines (1 before and 1 after)
+                context_before = all_lines[line_num - 2].rstrip() if line_num > 1 else None
+                context_after = all_lines[line_num].rstrip() if line_num < len(all_lines) else None
+
+                yield UrlReplacement(
+                    filepath, line_num, original_line, replacement_line, context_before, context_after
+                )
+
+
+def rev_search(directory: str):
+    """
+    Search for URLs in .rst files that can be replaced with Sphinx references.
+
+    Parameters
+    ----------
+    directory : str
+        Directory to search for .rst files
+    """
+    if not _are_dependencies_available():
+        return
+
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    CYAN = "\033[36m"
+    RED_BG = "\033[41;37m"
+    GREEN_BG = "\033[42;30m"
+    RESET = "\033[0m"
+
+    found_any = False
+    for replacement in _find_url_replacements(directory):
+        if not found_any:
+            found_any = True
+        display_path = _compress_user_path(replacement.filepath)
+        print(f"{CYAN}{display_path}:{replacement.line_num}{RESET}")
+
+        # Print context before
+        if replacement.context_before is not None:
+            print(f"       {replacement.context_before}")
+
+        url_match = re.search(
+            r"https?://[^\s<>\"{}|\\^`\[\]]+", replacement.original_line
+        )
+        if not url_match:
+            print(f"     {RED}- {replacement.original_line}{RESET}")
+            print(f"     {GREEN}+ {replacement.replacement_line}{RESET}")
+        else:
+            url = url_match.group(0).rstrip(".,;:!?)")
+            url_pos = replacement.original_line.find(url)
+
+            before = replacement.original_line[:url_pos]
+            after = replacement.original_line[url_pos + len(url) :]
+
+            original_text = url
+            link_match = re.search(
+                r"`([^`<>]+)\s*<" + re.escape(url) + r">`_",
+                replacement.original_line,
+            )
+            simple_link_match = re.search(
+                r"<" + re.escape(url) + r">`_", replacement.original_line
+            )
+
+            if link_match:
+                original_text = link_match.group(0)
+                url_pos = replacement.original_line.find(original_text)
+                before = replacement.original_line[:url_pos]
+                after = replacement.original_line[url_pos + len(original_text) :]
+            elif simple_link_match:
+                original_text = simple_link_match.group(0)
+                url_pos = replacement.original_line.find(original_text)
+                before = replacement.original_line[:url_pos]
+                after = replacement.original_line[url_pos + len(original_text) :]
+
+            rep_match = re.search(
+                r"https?://[^\s<>\"{}|\\^`\[\]]+", replacement.replacement_line
+            )
+            if rep_match:
+                rep_url = rep_match.group(0).rstrip(".,;:!?)")
+                rep_pos = replacement.replacement_line.find(rep_url)
+                rep_before = replacement.replacement_line[:rep_pos]
+                rep_after = replacement.replacement_line[rep_pos + len(rep_url) :]
+                rep_text = rep_url
+            else:
+                rst_ref_match = re.search(
+                    r":\w+:\w+:`[^`]+`", replacement.replacement_line
+                )
+                if rst_ref_match:
+                    rep_text = rst_ref_match.group(0)
+                    rep_pos = replacement.replacement_line.find(rep_text)
+                    rep_before = replacement.replacement_line[:rep_pos]
+                    rep_after = replacement.replacement_line[rep_pos + len(rep_text) :]
                 else:
-                    before = original_line[:url_pos]
-                    after = original_line[url_pos + len(url) :]
-
-                    replacement = rst_ref
-                    original_text = url
-
-                    link_match = re.search(
-                        r"`([^`<>]+)\s*<" + re.escape(url) + r">`_", original_line
+                    link_rep_match = re.search(
+                        r"`[^`]+<:\w+:\w+:`[^`]+`>`_", replacement.replacement_line
                     )
-                    simple_link_match = re.search(
-                        r"<" + re.escape(url) + r">`_", original_line
-                    )
-                    if link_match:
-                        link_text = link_match.group(1).strip()
-                        original_text = link_match.group(0)
-                        replacement = f"`{link_text} <{rst_ref}>`_"
-                        url_pos = original_line.find(original_text)
-                        before = original_line[:url_pos]
-                        after = original_line[url_pos + len(original_text) :]
-                    elif simple_link_match:
-                        original_text = simple_link_match.group(0)
-                        if display_name and display_name != "-":
-                            replacement = f"`{display_name} <{rst_ref}>`_"
-                        else:
-                            replacement = f"`{rst_entry} <{rst_ref}>`_"
-                        url_pos = original_line.find(original_text)
-                        before = original_line[:url_pos]
-                        after = original_line[url_pos + len(original_text) :]
-                    elif before and before[-1] == "<":
-                        replacement = rst_ref
-                    elif re.search(r":\w+:`[^`]*" + re.escape(url), original_line):
-                        replacement = rst_ref
-                    elif re.search(r"\.\.\s+\w+::", original_line):
-                        replacement = rst_ref
+                    if link_rep_match:
+                        rep_text = link_rep_match.group(0)
+                        rep_pos = replacement.replacement_line.find(rep_text)
+                        rep_before = replacement.replacement_line[:rep_pos]
+                        rep_after = replacement.replacement_line[
+                            rep_pos + len(rep_text) :
+                        ]
                     else:
-                        if display_name and display_name != "-":
-                            replacement = f"`{display_name} <{rst_ref}>`_"
-                        else:
-                            replacement = f"`{rst_entry} <{rst_ref}>`_"
+                        rep_before = ""
+                        rep_text = replacement.replacement_line
+                        rep_after = ""
 
-                    print(
-                        f"     {RED}- {before}{RED_BG}{original_text}{RESET}{RED}{after}{RESET}"
-                    )
-                    print(
-                        f"     {GREEN}+ {before}{GREEN_BG}{replacement}{RESET}{GREEN}{after}{RESET}"
-                    )
-                print()
+            after_with_color = f"{RED}{after}" if after else ""
+            rep_after_with_color = f"{GREEN}{rep_after}" if rep_after else ""
+            print(
+                f"     {RED}- {before}{RED_BG}{original_text}{RESET}{after_with_color}{RESET}"
+            )
+            print(
+                f"     {GREEN}+ {rep_before}{GREEN_BG}{rep_text}{RESET}{rep_after_with_color}{RESET}"
+            )
+
+        # Print context after
+        if replacement.context_after is not None:
+            print(f"       {replacement.context_after}")
+
+        print()
 
     if not found_any:
         print("No URLs found that can be replaced with Sphinx references")
