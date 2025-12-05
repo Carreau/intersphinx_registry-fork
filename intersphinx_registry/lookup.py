@@ -410,6 +410,61 @@ def clear_cache() -> None:
     print("Cache cleared successfully")
 
 
+def get_info() -> dict[str, str]:
+    """
+    Get information about the intersphinx-registry installation.
+
+    Returns
+    -------
+    dict[str, str]
+        Dictionary containing version and cache location
+    """
+    from intersphinx_registry import __version__
+
+    info = {
+        "version": __version__,
+    }
+
+    # Get cache location if dependencies are available
+    try:
+        import requests_cache
+        cache = requests_cache.CachedSession(
+            "intersphinx_cache",
+            backend="filesystem",
+            use_cache_dir=True,
+        )
+        info["cache_location"] = str(cache.cache.cache_dir)
+    except Exception:
+        info["cache_location"] = "N/A (dependencies not installed)"
+
+    return info
+
+
+def print_info() -> None:
+    """Print information about the intersphinx-registry installation."""
+    info = get_info()
+
+    # Compress paths by replacing home directory with ~
+    home = str(Path.home())
+    cache_location = info['cache_location']
+
+    if cache_location.startswith(home):
+        cache_location = cache_location.replace(home, "~", 1)
+
+    print("Intersphinx Registry Information")
+    print("=" * 50)
+    print(f"Version:               {info['version']}")
+    print(f"Cache location:        {cache_location}")
+
+    # Count packages in registry
+    try:
+        registry_file_path = Path(__file__).parent / "registry.json"
+        registry = json.loads(registry_file_path.read_bytes())
+        print(f"Packages in registry:  {len(registry)}")
+    except Exception as e:
+        print(f"Packages in registry:  Error reading registry ({e})")
+
+
 def _are_dependencies_available() -> bool:
     """
     Check if CLI dependencies are missing or not.

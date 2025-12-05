@@ -6,6 +6,7 @@ from intersphinx_registry.lookup import (
     _are_dependencies_available,
     clear_cache,
     lookup_packages,
+    print_info,
     rev_search,
     reverse_lookup,
 )
@@ -135,6 +136,13 @@ def main():
         description="Clear the cached intersphinx inventory files",
     )
     clear_cache_parser.set_defaults(func=clear_cache_command)
+
+    info_parser = subparsers.add_parser(
+        "info",
+        help="Display information about the intersphinx-registry installation",
+        description="Show version, cache location, registry file location, and package count",
+    )
+    info_parser.set_defaults(func=lambda args: print_info())
 
     args = parser.parse_args()
 
