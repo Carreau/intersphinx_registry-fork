@@ -22,6 +22,26 @@ ReverseLookupResult = namedtuple(
 )
 
 
+def _compress_user_path(path: str) -> str:
+    """
+    Replace home directory with ~ in a path string.
+
+    Parameters
+    ----------
+    path : str
+        Path to compress
+
+    Returns
+    -------
+    str
+        Path with home directory replaced by ~
+    """
+    home = str(Path.home())
+    if path.startswith(home):
+        return path.replace(home, "~", 1)
+    return path
+
+
 def _get_cache_dir() -> Path:
     """
     Get the cache directory for the current version of intersphinx_registry.
@@ -306,7 +326,6 @@ def rev_search(directory: str):
 
     url_pattern = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
 
-    home = str(Path.home())
     found_any = False
 
     RED = "\033[31m"
@@ -366,9 +385,7 @@ def rev_search(directory: str):
             found_any = True
 
         filepath = str(rst_file)
-        display_path = (
-            filepath.replace(home, "~") if filepath.startswith(home) else filepath
-        )
+        display_path = _compress_user_path(filepath)
 
         for (
             url,
@@ -479,11 +496,7 @@ def print_info() -> None:
     """Print information about the intersphinx-registry installation."""
     info = get_info()
 
-    home = str(Path.home())
-    cache_location = info["cache_location"]
-
-    if cache_location.startswith(home):
-        cache_location = cache_location.replace(home, "~", 1)
+    cache_location = _compress_user_path(info["cache_location"])
 
     print("Intersphinx Registry Information")
     print("=" * 50)

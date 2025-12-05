@@ -26,12 +26,6 @@ def lookup_command(args):
     lookup_packages(args.packages, args.search_term)
 
 
-
-
-def clear_cache_command(args):
-    clear_cache()
-
-
 def main():
     parser = argparse.ArgumentParser(
         prog="intersphinx-registry",
@@ -135,7 +129,7 @@ def main():
         help="Clear the intersphinx inventory cache",
         description="Clear the cached intersphinx inventory files",
     )
-    clear_cache_parser.set_defaults(func=clear_cache_command)
+    clear_cache_parser.set_defaults(func=lambda args: clear_cache())
 
     info_parser = subparsers.add_parser(
         "info",
