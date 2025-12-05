@@ -1,5 +1,6 @@
 import json
 import re
+import shutil
 import sys
 import warnings
 from collections import namedtuple
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urljoin, urlparse
 
+import platformdirs
 import requests
 import requests_cache
 from sphinx.util.inventory import InventoryFile
@@ -51,15 +53,7 @@ def _get_cache_dir() -> Path:
     Path
         Cache directory path with version subdirectory
     """
-    try:
-        import platformdirs
-
-        base_cache_dir = Path(platformdirs.user_cache_dir("intersphinx_registry"))
-    except ModuleNotFoundError:
-        import tempfile
-
-        base_cache_dir = Path(tempfile.gettempdir()) / "intersphinx_registry"
-
+    base_cache_dir = Path(platformdirs.user_cache_dir("intersphinx_registry"))
     cache_dir = base_cache_dir / __version__
     cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -71,14 +65,7 @@ def _cleanup_old_caches():
     Remove cache directories from old versions of intersphinx_registry.
     Only keeps the current version's cache.
     """
-    try:
-        import platformdirs
-
-        base_cache_dir = Path(platformdirs.user_cache_dir("intersphinx_registry"))
-    except ModuleNotFoundError:
-        import tempfile
-
-        base_cache_dir = Path(tempfile.gettempdir()) / "intersphinx_registry"
+    base_cache_dir = Path(platformdirs.user_cache_dir("intersphinx_registry"))
 
     if not base_cache_dir.exists():
         return
@@ -88,8 +75,6 @@ def _cleanup_old_caches():
     for version_dir in base_cache_dir.iterdir():
         if version_dir.is_dir() and version_dir.name != current_version:
             try:
-                import shutil
-
                 shutil.rmtree(version_dir)
             except Exception:
                 pass
@@ -451,8 +436,6 @@ def clear_cache() -> None:
     if not _are_dependencies_available():
         return
 
-    import shutil
-
     cache_dir = _get_cache_dir()
 
     if cache_dir.exists():
@@ -477,8 +460,6 @@ def get_info() -> dict[str, str]:
     dict[str, str]
         Dictionary containing version and cache location
     """
-    from intersphinx_registry import __version__
-
     info = {
         "version": __version__,
     }
@@ -532,6 +513,11 @@ def _are_dependencies_available() -> bool:
     except ModuleNotFoundError:
         missing.append("requests-cache")
 
+    try:
+        import platformdirs  # noqa: F401
+    except ModuleNotFoundError:
+        missing.append("platformdirs")
+
     if missing:
         print(
             "ERROR: the lookup functionality requires additional dependencies.",
@@ -560,9 +546,6 @@ def lookup_packages(packages_str: str, search_term: Optional[str] = None):
     """
     if not _are_dependencies_available():
         return
-
-    import requests
-    from sphinx.util.inventory import InventoryFile
 
     packages = set(packages_str.split(","))
 
