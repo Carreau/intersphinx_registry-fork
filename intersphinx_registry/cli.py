@@ -25,19 +25,6 @@ def lookup_command(args):
     lookup_packages(args.packages, args.search_term)
 
 
-def reverse_lookup_command(args):
-    reverse_lookup(args.urls)
-
-
-def rev_search_command(args):
-    if not args.directory:
-        print("Usage: intersphinx-registry rev-search <directory>\n")
-        print("Examples:")
-        print("  intersphinx-registry rev-search docs/")
-        print("  intersphinx-registry rev-search .")
-        sys.exit(0)
-
-    rev_search(args.directory)
 
 
 def clear_cache_command(args):
@@ -96,10 +83,15 @@ def main():
     )
     reverse_lookup_parser.add_argument(
         "urls",
-        nargs="+",
+        nargs="*",
         help="URLs to look up (space-separated)",
     )
-    reverse_lookup_parser.set_defaults(func=reverse_lookup_command)
+    def _reverse_lookup_wrapper(args):
+        if not args.urls:
+            reverse_lookup_parser.print_help()
+            sys.exit(0)
+        reverse_lookup(args.urls)
+    reverse_lookup_parser.set_defaults(func=_reverse_lookup_wrapper)
 
     rev_parser = subparsers.add_parser(
         "rev",
@@ -112,23 +104,30 @@ def main():
     )
     rev_parser.add_argument(
         "urls",
-        nargs="+",
+        nargs="*",
         help="URLs to look up (space-separated)",
     )
-    rev_parser.set_defaults(func=reverse_lookup_command)
+    def _rev_wrapper(args):
+        if not args.urls:
+            rev_parser.print_help()
+            sys.exit(0)
+        reverse_lookup(args.urls)
+    rev_parser.set_defaults(func=_rev_wrapper)
 
     rev_search_parser = subparsers.add_parser(
         "rev-search",
         help="Search .rst files for URLs that can be replaced with Sphinx references",
         description="Scan directory for .rst files and find URLs that can be replaced",
+        epilog="Examples:\n"
+               "  intersphinx-registry rev-search docs/\n"
+               "  intersphinx-registry rev-search .",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     rev_search_parser.add_argument(
         "directory",
-        nargs="?",
-        default=None,
         help="Directory to search for .rst files",
     )
-    rev_search_parser.set_defaults(func=rev_search_command)
+    rev_search_parser.set_defaults(func=lambda args: rev_search(args.directory))
 
     clear_cache_parser = subparsers.add_parser(
         "clear-cache",
