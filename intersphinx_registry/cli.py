@@ -26,17 +26,6 @@ def lookup_command(args):
 
 
 def reverse_lookup_command(args):
-    if not args.urls:
-        print("Usage: intersphinx-registry reverse-lookup <url> [url ...]\n")
-        print("Examples:")
-        print(
-            "  intersphinx-registry reverse-lookup https://numpy.org/doc/stable/reference/arrays.html"
-        )
-        print(
-            "  intersphinx-registry reverse-lookup https://docs.python.org/3/ https://numpy.org/doc/stable/"
-        )
-        sys.exit(0)
-
     reverse_lookup(args.urls)
 
 
@@ -100,11 +89,14 @@ def main():
         "reverse-lookup",
         help="Find which packages documentation URLs belong to",
         description="Given URLs, find which packages they come from",
+        epilog="Examples:\n"
+               "  intersphinx-registry reverse-lookup https://numpy.org/doc/stable/reference/arrays.html\n"
+               "  intersphinx-registry reverse-lookup https://docs.python.org/3/ https://numpy.org/doc/stable/",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     reverse_lookup_parser.add_argument(
         "urls",
-        nargs="*",
-        default=None,
+        nargs="+",
         help="URLs to look up (space-separated)",
     )
     reverse_lookup_parser.set_defaults(func=reverse_lookup_command)
@@ -113,11 +105,14 @@ def main():
         "rev",
         help="Alias for reverse-lookup",
         description="Given URLs, find which packages they come from",
+        epilog="Examples:\n"
+               "  intersphinx-registry rev https://numpy.org/doc/stable/reference/arrays.html\n"
+               "  intersphinx-registry rev https://docs.python.org/3/ https://numpy.org/doc/stable/",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     rev_parser.add_argument(
         "urls",
-        nargs="*",
-        default=None,
+        nargs="+",
         help="URLs to look up (space-separated)",
     )
     rev_parser.set_defaults(func=reverse_lookup_command)
