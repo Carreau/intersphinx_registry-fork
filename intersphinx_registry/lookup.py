@@ -1,19 +1,97 @@
 import json
-import os
 import re
 import sys
 import warnings
+from collections import namedtuple
 from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 from urllib.parse import urljoin, urlparse
 
 import requests
 import requests_cache
 from sphinx.util.inventory import InventoryFile
 
-from . import get_intersphinx_mapping
+from . import __version__, get_intersphinx_mapping
+
+# Named tuple for reverse lookup results
+ReverseLookupResult = namedtuple(
+    "ReverseLookupResult",
+    ["url", "package", "domain", "rst_entry", "display_name", "is_fuzzy_match"],
+)
+
+
+def _get_cache_dir() -> Path:
+    """
+    Get the cache directory for the current version of intersphinx_registry.
+
+    Returns
+    -------
+    Path
+        Cache directory path with version subdirectory
+    """
+    try:
+        import platformdirs
+
+        base_cache_dir = Path(platformdirs.user_cache_dir("intersphinx_registry"))
+    except ModuleNotFoundError:
+        import tempfile
+
+        base_cache_dir = Path(tempfile.gettempdir()) / "intersphinx_registry"
+
+    cache_dir = base_cache_dir / __version__
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    return cache_dir
+
+
+def _cleanup_old_caches():
+    """
+    Remove cache directories from old versions of intersphinx_registry.
+    Only keeps the current version's cache.
+    """
+    try:
+        import platformdirs
+
+        base_cache_dir = Path(platformdirs.user_cache_dir("intersphinx_registry"))
+    except ModuleNotFoundError:
+        import tempfile
+
+        base_cache_dir = Path(tempfile.gettempdir()) / "intersphinx_registry"
+
+    if not base_cache_dir.exists():
+        return
+
+    current_version = __version__
+
+    for version_dir in base_cache_dir.iterdir():
+        if version_dir.is_dir() and version_dir.name != current_version:
+            try:
+                import shutil
+
+                shutil.rmtree(version_dir)
+            except Exception:
+                pass
+
+
+def _install_cache():
+    """
+    Install the version-specific requests cache.
+    Cleans up old caches on first use.
+    """
+    _cleanup_old_caches()
+
+    cache_dir = _get_cache_dir()
+    cache_path = cache_dir / "intersphinx_cache.sqlite"
+
+    requests_cache.install_cache(
+        str(cache_path),
+        backend="sqlite",
+        expire_after=timedelta(hours=6),
+        stale_if_error=True,
+        cache_control=True,
+    )
 
 
 def _normalize_url_for_matching(url: str) -> str:
@@ -23,13 +101,13 @@ def _normalize_url_for_matching(url: str) -> str:
     This helps match URLs like:
     - /stable/ vs /latest/ vs /main/
     """
-    normalized = re.sub(r'/(latest|stable|main|dev|master)/', '/_VERSION_/', url)
+    normalized = re.sub(r"/(latest|stable|main|dev|master)/", "/_VERSION_/", url)
     return normalized
 
 
 def _do_reverse_lookup(
     urls: list[str],
-) -> list[tuple[str, str, str | None, str | None, str | None, bool]]:
+) -> list[ReverseLookupResult]:
     """
     Core reverse lookup logic: given URLs, find which packages they belong to and their rst references.
 
@@ -40,25 +118,16 @@ def _do_reverse_lookup(
 
     Returns
     -------
-    list[tuple[str, str, str | None, str | None, str | None, bool]]
-        List of tuples: (url, package, domain, rst_entry, display_name, is_fuzzy_match)
+    list[ReverseLookupResult]
+        List of ReverseLookupResult named tuples with fields:
+        url, package, domain, rst_entry, display_name, is_fuzzy_match
     """
-    requests_cache.install_cache(
-        "intersphinx_cache",
-        backend="filesystem",
-        expire_after=timedelta(hours=6),
-        use_cache_dir=True,
-        stale_if_error=True,
-        cache_control=True,
-    )
+    _install_cache()
 
     registry_file = Path(__file__).parent / "registry.json"
     registry = json.loads(registry_file.read_bytes())
 
-    # Group URLs by package to avoid downloading inventories multiple times
-    # Also track URLs that might need fuzzy matching (same domain, different path)
     package_urls: dict[str, list[tuple[str, str, str | None]]] = {}
-    fuzzy_urls: list[tuple[str, str, str | None]] = []
 
     for url_str in urls:
         base_str = url_str
@@ -70,7 +139,6 @@ def _do_reverse_lookup(
         else:
             url_str_index = None
 
-        # Try exact base URL match first
         matched = False
         for package, (base_url, obj_path) in registry.items():
             if url_str.startswith(base_url):
@@ -80,25 +148,30 @@ def _do_reverse_lookup(
                 matched = True
                 break
 
-        # If no exact match, check if domain matches and path is similar after normalization
         if not matched:
             url_domain = urlparse(url_str).netloc
-            url_path_normalized = _normalize_url_for_matching(urlparse(url_str).path).rstrip('/').replace('/index.html', '')
+            url_path_normalized = (
+                _normalize_url_for_matching(urlparse(url_str).path)
+                .rstrip("/")
+                .replace("/index.html", "")
+            )
 
             for package, (base_url, obj_path) in registry.items():
                 base_domain = urlparse(base_url).netloc
                 if url_domain == base_domain:
-                    base_path_normalized = _normalize_url_for_matching(urlparse(base_url).path).rstrip('/')
-                    # Check if normalized paths share a common prefix (domain-level fuzzy match)
-                    if url_path_normalized.startswith(base_path_normalized) or base_path_normalized.startswith(url_path_normalized):
+                    base_path_normalized = _normalize_url_for_matching(
+                        urlparse(base_url).path
+                    ).rstrip("/")
+                    if url_path_normalized.startswith(
+                        base_path_normalized
+                    ) or base_path_normalized.startswith(url_path_normalized):
                         package_urls.setdefault(package, []).append(
                             (base_str, url_str, url_str_index)
                         )
                         break
 
-    results: list[tuple[str, str, str | None, str | None, str | None, bool]] = []
+    results: list[ReverseLookupResult] = []
 
-    # Process each package once, looking up all its URLs
     for package, url_list in package_urls.items():
         base_url, obj_path = registry[package]
         inv_url = urljoin(base_url, obj_path if obj_path else "objects.inv")
@@ -111,96 +184,51 @@ def _do_reverse_lookup(
             warnings.warn(
                 f"Failed to load inventory for '{package}' from {inv_url}: {e}",
                 UserWarning,
-                stacklevel=2
+                stacklevel=2,
             )
-            # If inventory fails to load, mark all URLs from this package as not found
             for base_str, url_str, url_str_index in url_list:
-                results.append((url_str, package, None, None, None, False))
+                results.append(
+                    ReverseLookupResult(url_str, package, None, None, None, False)
+                )
             continue
 
-        # Build a list of all URLs in the inventory for fuzzy matching
         inv_urls = {}
-        inv_urls_normalized = {}
         for key, v in inv.items():
             for entry, item in v.items():
                 inv_urls[item.uri] = (key, entry, item.display_name)
-                normalized = _normalize_url_for_matching(item.uri)
-                inv_urls_normalized[normalized] = item.uri
 
-        # Look up each URL for this package in the inventory
         for base_str, url_str, url_str_index in url_list:
             found = False
-            is_fuzzy = False
 
-            # Try exact match first
             for check_url in [url_str, url_str_index]:
                 if check_url and check_url in inv_urls:
                     key, entry, display_name = inv_urls[check_url]
-                    results.append((base_str, package, key, entry, display_name, False))
+                    results.append(
+                        ReverseLookupResult(
+                            base_str, package, key, entry, display_name, False
+                        )
+                    )
                     found = True
                     break
 
-            # If not found, try fuzzy matching with normalized URLs
             if not found:
-                try:
-                    from rapidfuzz import process, fuzz
-
-                    normalized_query = _normalize_url_for_matching(url_str)
-
-                    # Try multiple fuzzy matching strategies, from most lenient to least
-                    best_match = None
-
-                    # Strategy 1: partial_ratio (most lenient - checks if one string is substring of other)
-                    best_match = process.extractOne(
-                        normalized_query,
-                        inv_urls_normalized.keys(),
-                        scorer=fuzz.partial_ratio,
-                        score_cutoff=70,
-                    )
-
-                    # Strategy 2: token_sort_ratio (good for reordered words)
-                    if not best_match:
-                        best_match = process.extractOne(
-                            normalized_query,
-                            inv_urls_normalized.keys(),
-                            scorer=fuzz.token_sort_ratio,
-                            score_cutoff=60,
-                        )
-
-                    # Strategy 3: ratio (standard comparison, very lenient cutoff)
-                    if not best_match:
-                        best_match = process.extractOne(
-                            normalized_query,
-                            inv_urls_normalized.keys(),
-                            scorer=fuzz.ratio,
-                            score_cutoff=50,
-                        )
-
-                    if best_match:
-                        matched_normalized = best_match[0]
-                        matched_url = inv_urls_normalized[matched_normalized]
-                        key, entry, display_name = inv_urls[matched_url]
-                        results.append((base_str, package, key, entry, display_name, True))
-                        found = True
-                except ImportError:
-                    pass
-
-            if not found:
-                results.append((url_str, package, None, None, None, False))
+                results.append(
+                    ReverseLookupResult(url_str, package, None, None, None, False)
+                )
 
     return results
 
 
 def _print_reverse_lookup_results(
-    results: list[tuple[str, str, str | None, str | None, str | None, bool]],
+    results: list[ReverseLookupResult],
 ):
     """
     Print formatted reverse lookup results.
 
     Parameters
     ----------
-    results : list[tuple[str, str, str | None, str | None, str | None, bool]]
-        List of tuples: (url, package, domain, rst_entry, display_name, is_fuzzy)
+    results : list[ReverseLookupResult]
+        List of ReverseLookupResult named tuples
     """
     if not results:
         return
@@ -209,34 +237,39 @@ def _print_reverse_lookup_results(
     header_rst = "Sphinx Reference"
     header_display = "Description"
 
-    width_url = max(len(header_url), max(len(r[0]) for r in results))
+    width_url = max(len(header_url), max(len(r.url) for r in results))
     width_rst = max(
         len(header_rst),
         max(
-            (len(f":{r[2]}:`{r[1]}:{r[3]}`") + (3 if r[5] else 0) if r[3] else len("NOT FOUND"))
+            (
+                len(f":{r.domain}:`{r.package}:{r.rst_entry}`")
+                if r.rst_entry
+                else len("NOT FOUND")
+            )
             for r in results
         ),
     )
     width_display = max(
-        len(header_display), max((len(r[4]) if r[4] else 0) for r in results)
+        len(header_display),
+        max((len(r.display_name) if r.display_name else 0) for r in results),
     )
 
     print(f"{header_url:<{width_url}}  {header_rst:<{width_rst}}  {header_display}")
     print(f"{'-' * width_url}  {'-' * width_rst}  {'-' * width_display}")
 
-    for url_str, package, domain_role, rst_entry, display_name, is_fuzzy in results:
-        if rst_entry:
-            rst_ref = f":{domain_role}:`{package}:{rst_entry}`"
-            if is_fuzzy:
-                rst_ref += " ~"
+    for result in results:
+        if result.rst_entry:
+            rst_ref = f":{result.domain}:`{result.package}:{result.rst_entry}`"
             display = (
-                display_name if display_name and display_name != "-" else rst_entry
+                result.display_name
+                if result.display_name and result.display_name != "-"
+                else result.rst_entry
             )
             print(
-                f"{url_str:<{width_url}}  {rst_ref:<{width_rst}}  {display:<{width_display}}"
+                f"{result.url:<{width_url}}  {rst_ref:<{width_rst}}  {display:<{width_display}}"
             )
-        elif package:
-            print(f"{url_str:<{width_url}}  {'NOT FOUND':<{width_rst}}")
+        elif result.package:
+            print(f"{result.url:<{width_url}}  {'NOT FOUND':<{width_rst}}")
 
 
 def reverse_lookup(urls: list[str]):
@@ -276,20 +309,18 @@ def rev_search(directory: str):
     home = str(Path.home())
     found_any = False
 
-    # ANSI color codes
     RED = "\033[31m"
     GREEN = "\033[32m"
     CYAN = "\033[36m"
-    RED_BG = "\033[41;37m"  # Red background with white foreground
-    GREEN_BG = "\033[42;30m"  # Green background with black foreground
+    RED_BG = "\033[41;37m"
+    GREEN_BG = "\033[42;30m"
     RESET = "\033[0m"
 
-    # Process files one by one to avoid memory issues
     directory_path = Path(directory)
     if directory_path.is_file():
         rst_files = [directory_path] if directory_path.suffix == ".rst" else []
     else:
-        rst_files = directory_path.rglob("*.rst")
+        rst_files = list(directory_path.rglob("*.rst"))
 
     for rst_file in rst_files:
         url_locations: dict[str, list[tuple[int, str]]] = {}
@@ -301,7 +332,9 @@ def rev_search(directory: str):
                     urls = url_pattern.findall(line)
                     for url in urls:
                         url = url.rstrip(".,;:!?)")
-                        url_locations.setdefault(url, []).append((line_num, line.rstrip()))
+                        url_locations.setdefault(url, []).append(
+                            (line_num, line.rstrip())
+                        )
         except Exception as e:
             print(f"Error reading {rst_file}: {e}")
             continue
@@ -309,15 +342,21 @@ def rev_search(directory: str):
         if not url_locations:
             continue
 
-        # Do reverse lookup for URLs in this file
         urls = list(url_locations.keys())
         results = _do_reverse_lookup(urls)
 
-        # Filter to only URLs that were found in inventories
         replaceable = [
-            (url, package, domain_role, rst_entry, display_name, is_fuzzy, url_locations[url])
-            for url, package, domain_role, rst_entry, display_name, is_fuzzy in results
-            if rst_entry is not None
+            (
+                result.url,
+                result.package,
+                result.domain,
+                result.rst_entry,
+                result.display_name,
+                result.is_fuzzy_match,
+                url_locations[result.url],
+            )
+            for result in results
+            if result.rst_entry is not None
         ]
 
         if not replaceable:
@@ -327,67 +366,63 @@ def rev_search(directory: str):
             found_any = True
 
         filepath = str(rst_file)
-        display_path = filepath.replace(home, "~") if filepath.startswith(home) else filepath
+        display_path = (
+            filepath.replace(home, "~") if filepath.startswith(home) else filepath
+        )
 
-        # Print results for this file in diff format
-        for url, package, domain_role, rst_entry, display_name, is_fuzzy, line_infos in replaceable:
+        for (
+            url,
+            package,
+            domain_role,
+            rst_entry,
+            display_name,
+            is_fuzzy,
+            line_infos,
+        ) in replaceable:
             rst_ref = f":{domain_role}:`{package}:{rst_entry}`"
 
             for line_num, original_line in line_infos:
                 print(f"{CYAN}{display_path}:{line_num}{RESET}")
 
-                # Find the position of the URL in the line
                 url_pos = original_line.find(url)
                 if url_pos == -1:
-                    # Fallback if URL not found exactly (shouldn't happen)
                     print(f"     {RED}- {original_line}{RESET}")
                     print(f"     {GREEN}+ {original_line.replace(url, rst_ref)}{RESET}")
                 else:
                     before = original_line[:url_pos]
-                    after = original_line[url_pos + len(url):]
+                    after = original_line[url_pos + len(url) :]
 
-                    # Detect context and generate smart replacement
                     replacement = rst_ref
                     original_text = url
 
-                    # Check if URL is in a RST link: `text <url>`_
-                    link_match = re.search(r'`([^`<>]+)\s*<' + re.escape(url) + r'>`_', original_line)
+                    link_match = re.search(
+                        r"`([^`<>]+)\s*<" + re.escape(url) + r">`_", original_line
+                    )
                     if link_match:
-                        # Preserve the link text, just replace URL with rst_ref
                         link_text = link_match.group(1).strip()
                         original_text = link_match.group(0)
                         replacement = f"`{link_text} <{rst_ref}>`_"
                         url_pos = original_line.find(original_text)
                         before = original_line[:url_pos]
-                        after = original_line[url_pos + len(original_text):]
-
-                    # Check if URL is preceded by '<' but we didn't match the full link pattern
-                    # This means it's in some link-like context, so just replace the URL
-                    elif before and before[-1] == '<':
+                        after = original_line[url_pos + len(original_text) :]
+                    elif before and before[-1] == "<":
                         replacement = rst_ref
-
-                    # Check if URL is inside a role (like :ref:`url` or :doc:`url`)
-                    elif re.search(r':\w+:`[^`]*' + re.escape(url), original_line):
-                        # Inside a role, just replace the URL
+                    elif re.search(r":\w+:`[^`]*" + re.escape(url), original_line):
                         replacement = rst_ref
-
-                    # Check if line contains a RST directive (.. directive::)
-                    elif re.search(r'\.\.\s+\w+::', original_line):
-                        # For directive lines like ".. seealso:: url", just replace URL
+                    elif re.search(r"\.\.\s+\w+::", original_line):
                         replacement = rst_ref
-
-                    # Check if URL is bare in text (not in link syntax)
                     else:
-                        # Use display name if available, otherwise use the entry name
                         if display_name and display_name != "-":
                             replacement = f"`{display_name} <{rst_ref}>`_"
                         else:
                             replacement = f"`{rst_entry} <{rst_ref}>`_"
 
-                    # Print original line: full line in red, with red background on the URL
-                    print(f"     {RED}- {before}{RED_BG}{original_text}{RESET}{RED}{after}{RESET}")
-                    # Print suggested line: full line in green, with green background on the replacement
-                    print(f"     {GREEN}+ {before}{GREEN_BG}{replacement}{RESET}{GREEN}{after}{RESET}")
+                    print(
+                        f"     {RED}- {before}{RED_BG}{original_text}{RESET}{RED}{after}{RESET}"
+                    )
+                    print(
+                        f"     {GREEN}+ {before}{GREEN_BG}{replacement}{RESET}{GREEN}{after}{RESET}"
+                    )
                 print()
 
     if not found_any:
@@ -395,18 +430,24 @@ def rev_search(directory: str):
 
 
 def clear_cache() -> None:
-    """Clear the intersphinx inventory cache."""
+    """Clear the intersphinx inventory cache for the current version."""
     if not _are_dependencies_available():
         return
 
-    import requests_cache
+    import shutil
 
-    cache = requests_cache.CachedSession(
-        "intersphinx_cache",
-        backend="filesystem",
-        use_cache_dir=True,
-    )
-    cache.cache.clear()
+    cache_dir = _get_cache_dir()
+
+    if cache_dir.exists():
+        for item in cache_dir.iterdir():
+            try:
+                if item.is_file():
+                    item.unlink()
+                elif item.is_dir():
+                    shutil.rmtree(item)
+            except Exception as e:
+                print(f"Warning: Could not remove {item}: {e}")
+
     print("Cache cleared successfully")
 
 
@@ -425,15 +466,9 @@ def get_info() -> dict[str, str]:
         "version": __version__,
     }
 
-    # Get cache location if dependencies are available
     try:
-        import requests_cache
-        cache = requests_cache.CachedSession(
-            "intersphinx_cache",
-            backend="filesystem",
-            use_cache_dir=True,
-        )
-        info["cache_location"] = str(cache.cache.cache_dir)
+        cache_dir = _get_cache_dir()
+        info["cache_location"] = str(cache_dir)
     except Exception:
         info["cache_location"] = "N/A (dependencies not installed)"
 
@@ -444,9 +479,8 @@ def print_info() -> None:
     """Print information about the intersphinx-registry installation."""
     info = get_info()
 
-    # Compress paths by replacing home directory with ~
     home = str(Path.home())
-    cache_location = info['cache_location']
+    cache_location = info["cache_location"]
 
     if cache_location.startswith(home):
         cache_location = cache_location.replace(home, "~", 1)
@@ -456,7 +490,6 @@ def print_info() -> None:
     print(f"Version:               {info['version']}")
     print(f"Cache location:        {cache_location}")
 
-    # Count packages in registry
     try:
         registry_file_path = Path(__file__).parent / "registry.json"
         registry = json.loads(registry_file_path.read_bytes())
@@ -516,19 +549,11 @@ def lookup_packages(packages_str: str, search_term: Optional[str] = None):
         return
 
     import requests
-    import requests_cache
     from sphinx.util.inventory import InventoryFile
 
     packages = set(packages_str.split(","))
 
-    requests_cache.install_cache(
-        "intersphinx_cache",
-        backend="filesystem",
-        expire_after=timedelta(hours=6),
-        use_cache_dir=True,
-        stale_if_error=True,
-        cache_control=True,
-    )
+    _install_cache()
 
     urls = [
         (u[0], (u[1] if u[1] else "objects.inv"))
