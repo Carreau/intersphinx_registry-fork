@@ -112,36 +112,23 @@ class ReplacementInfo(NamedTuple):
     context_new: OutputReplacementContext
 
 
-def _compute_replacement(
-    original: ReplacementContext,
+def _compute_full_link_replacement(
+    original_line: str,
+    context_before_str: str,
+    context_after_str: str,
     lookup_result: ReverseLookupResult,
-) -> ReplacementInfo:
+    target: str,
+) -> Optional[ReplacementInfo]:
     """
-    Compute the replacement line(s) for a URL in an RST file.
+    Handle full RST link replacement.
 
-    Parameters
-    ----------
-    original : ReplacementContext
-        The original lines (context_before, target_line, context_after)
-    lookup_result : ReverseLookupResult
-        The reverse lookup result containing url, package, domain, rst_entry, etc.
+    Handles cases like:
+    - `` `setuptools documentation <https://setuptools.pypa.io/en/latest/setuptools.html>`__ ``
+    - `` `link text <URL>`_ ``
+    - `` See `link text <URL>`__ for details ``
 
-    Returns
-    -------
-    ReplacementInfo
-        A named tuple with (context_old, context_new).
-        - context_old: OutputReplacementContext with all Removed tokens (original state)
-        - context_new: OutputReplacementContext with Removed/Added tokens (modified state)
+    Returns None if the pattern doesn't match.
     """
-    target = f"{lookup_result.package}:{lookup_result.rst_entry}"
-    rst_ref = f":{lookup_result.domain}:`{target}`"
-
-    original_line = original.target_line
-    context_before_str = original.context_before
-    context_after_str = original.context_after
-
-    # Allow optional trailing punctuation before the closing >
-    # The URL in the text might have trailing punctuation that was stripped during lookup
     full_link_match = re.search(
         r"`([^`<>]+)\s*<" + re.escape(lookup_result.url) + r"[.,;:!?)]*>`__?",
         original_line,
@@ -242,8 +229,27 @@ def _compute_replacement(
             context_old,
             context_new,
         )
+    return None
 
-    # Allow optional trailing punctuation before the closing >
+
+def _compute_simple_link_replacement(
+    original_line: str,
+    context_before_str: str,
+    context_after_str: str,
+    lookup_result: ReverseLookupResult,
+    target: str,
+    rst_ref: str,
+) -> Optional[ReplacementInfo]:
+    """
+    Handle simple RST link replacement (may span multiple lines).
+
+    Handles cases like:
+    - `` `<https://docs.python.org/3/library/os.html>`_ ``
+    - `` `<https://docs.python.org/3/library/os.html>`__ ``
+    - Multi-line: context_before has `` `link text ``, target_line has `` <URL>`_ ``
+
+    Returns None if the pattern doesn't match.
+    """
     simple_link_match = re.search(
         r"`?<" + re.escape(lookup_result.url) + r"[.,;:!?)]*>`__?", original_line
     )
@@ -345,7 +351,26 @@ def _compute_replacement(
             context_old,
             context_new,
         )
+    return None
 
+
+def _compute_url_replacement(
+    original_line: str,
+    context_before_str: str,
+    context_after_str: str,
+    lookup_result: ReverseLookupResult,
+    rst_ref: str,
+) -> ReplacementInfo:
+    """
+    Handle plain URL replacement in text.
+
+    Handles cases like:
+    - `` See https://docs.python.org/3/library/os.html for details ``
+    - `` Check https://docs.python.org/3/library/os.html. ``
+    - `` https://docs.python.org/3/library/os.html is the documentation ``
+
+    This is the fallback case when no RST link pattern matches.
+    """
     url_match = re.search(re.escape(lookup_result.url) + r"[.,;:!?)]*", original_line)
     if url_match:
         start_idx = url_match.start()
@@ -370,24 +395,71 @@ def _compute_replacement(
     ctx_after_tokens_old = (Unchanged(context_after_str),)
     ctx_after_tokens_new = (Unchanged(context_after_str),)
 
-    ctx_before_final = (Unchanged(context_before_str),)
-    ctx_after_final = (Unchanged(context_after_str),)
-
-    context_old_final: OutputReplacementContext = (
-        ctx_before_final,
+    context_old: OutputReplacementContext = (
+        ctx_before_tokens_old,
         tuple(target_tokens_old_list3),
-        ctx_after_final,
+        ctx_after_tokens_old,
     )
 
-    context_new_final: OutputReplacementContext = (
-        ctx_before_final,
+    context_new: OutputReplacementContext = (
+        ctx_before_tokens_new,
         tuple(target_tokens_new_list3),
-        ctx_after_final,
+        ctx_after_tokens_new,
     )
 
     return ReplacementInfo(
-        context_old_final,
-        context_new_final,
+        context_old,
+        context_new,
+    )
+
+
+def _compute_replacement(
+    original: ReplacementContext,
+    lookup_result: ReverseLookupResult,
+) -> ReplacementInfo:
+    """
+    Compute the replacement line(s) for a URL in an RST file.
+
+    Parameters
+    ----------
+    original : ReplacementContext
+        The original lines (context_before, target_line, context_after)
+    lookup_result : ReverseLookupResult
+        The reverse lookup result containing url, package, domain, rst_entry, etc.
+
+    Returns
+    -------
+    ReplacementInfo
+        A named tuple with (context_old, context_new).
+        - context_old: OutputReplacementContext with all Removed tokens (original state)
+        - context_new: OutputReplacementContext with Removed/Added tokens (modified state)
+    """
+    target = f"{lookup_result.package}:{lookup_result.rst_entry}"
+    rst_ref = f":{lookup_result.domain}:`{target}`"
+
+    original_line = original.target_line
+    context_before_str = original.context_before
+    context_after_str = original.context_after
+
+    result = _compute_full_link_replacement(
+        original_line, context_before_str, context_after_str, lookup_result, target
+    )
+    if result is not None:
+        return result
+
+    result = _compute_simple_link_replacement(
+        original_line,
+        context_before_str,
+        context_after_str,
+        lookup_result,
+        target,
+        rst_ref,
+    )
+    if result is not None:
+        return result
+
+    return _compute_url_replacement(
+        original_line, context_before_str, context_after_str, lookup_result, rst_ref
     )
 
 
