@@ -45,10 +45,6 @@ class UrlReplacement(NamedTuple):
         Path to the RST file containing the URL
     line_num : int
         Line number where the URL was found
-    original_line : str
-        The original line containing the URL
-    replacement_line : Optional[str]
-        The replacement line with Sphinx reference, or None if no replacement available
     context_old : OutputReplacementContext
         The old context (before replacement) with tokenized (context_before_tokens, target_line_tokens, context_after_tokens)
     context_new : OutputReplacementContext
@@ -59,8 +55,6 @@ class UrlReplacement(NamedTuple):
 
     filepath: str
     line_num: int
-    original_line: str
-    replacement_line: Optional[str]
     context_old: OutputReplacementContext
     context_new: OutputReplacementContext
     inventory_url: Optional[str]
@@ -546,7 +540,7 @@ def _find_url_replacements(directory: str):
     ------
     UrlReplacement
         UrlReplacement namedtuples containing:
-        filepath, line_num, original_line, replacement_line
+        filepath, line_num, context_old, context_new, inventory_url
     """
     url_pattern = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
 
@@ -609,23 +603,9 @@ def _find_url_replacements(directory: str):
                         lookup_result,
                     )
 
-                    # Extract target_line_tokens from context_new to reconstruct replacement_line
-                    (
-                        _,
-                        target_line_tokens,
-                        _,
-                    ) = replacement_info.context_new
-
-                    # Reconstruct replacement_line from target_line_tokens (excluding Removed)
-                    replacement_line = _reconstruct_replacement_from_tokens(
-                        target_line_tokens, original_line
-                    )
-
                     yield UrlReplacement(
                         filepath,
                         line_num,
-                        original_line,
-                        replacement_line,
                         replacement_info.context_old,
                         replacement_info.context_new,
                         lookup_result.inventory_url,
@@ -640,8 +620,6 @@ def _find_url_replacements(directory: str):
                     yield UrlReplacement(
                         filepath,
                         line_num,
-                        original_line,
-                        None,  # No replacement available
                         empty_context,
                         empty_context,
                         lookup_result.inventory_url,
@@ -781,7 +759,8 @@ def rev_search(directory: str) -> None:
         display_path = _compress_user_path(replacement.filepath)
         print(f"{CYAN}{display_path}:{replacement.line_num}{RESET}")
 
-        if replacement.replacement_line is None:
+        # Check if no replacement available (context_old == context_new means no changes)
+        if replacement.context_old == replacement.context_new:
             # No replacement available - print old context only
             ctx_before_tokens_old, target_tokens_old, ctx_after_tokens_old = replacement.context_old
 
