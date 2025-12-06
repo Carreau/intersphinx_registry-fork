@@ -818,11 +818,16 @@ def rev_search(directory: str) -> None:
         if replacement.inventory_url:
             # Check if inventory_url appears in target_tokens_old
             old_text = "".join(str(token) for token in target_tokens_old if not isinstance(token, Added))
-            if replacement.inventory_url in old_text:
-                # Find position to align the inventory URL
-                url_pos = old_text.find(replacement.inventory_url)
-                spaces = " " * (7 + url_pos)
-                print(f"{spaces}{YELLOW}{YELLOW_BG}{replacement.inventory_url}{RESET}")
+            if replacement.inventory_url not in old_text:
+                # Find position to align the inventory URL on "https://"
+                # Look for "https://" in the old text to align with
+                https_pos = old_text.find("https://")
+                if https_pos >= 0:
+                    spaces = " " * (7 + https_pos)
+                    print(f"{spaces}{YELLOW}{YELLOW_BG}{replacement.inventory_url}{RESET}")
+                else:
+                    # Fallback: print at start of line if no https:// found
+                    print(f"       {YELLOW}{YELLOW_BG}{replacement.inventory_url}{RESET}")
 
         # Print all new lines together (before and target)
         # Print context_before (new) if it changed
