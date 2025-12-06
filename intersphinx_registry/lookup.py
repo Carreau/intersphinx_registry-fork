@@ -20,7 +20,7 @@ from . import __version__, get_intersphinx_mapping
 # Named tuple for reverse lookup results
 ReverseLookupResult = namedtuple(
     "ReverseLookupResult",
-    ["url", "package", "domain", "rst_entry", "display_name", "is_fuzzy_match"],
+    ["url", "package", "domain", "rst_entry", "display_name"],
 )
 
 UrlReplacement = namedtuple(
@@ -122,6 +122,50 @@ def _normalize_url_for_matching(url: str) -> str:
     return normalized
 
 
+def uri_match(user_url: str, inv_url: str) -> bool:
+    """
+    Check if two URIs match, handling index.html variations and version normalization.
+
+    Parameters
+    ----------
+    user_url : str
+        URL from user input or RST file
+    inv_url : str
+        URL from intersphinx inventory
+
+    Returns
+    -------
+    bool
+        True if the URLs match (considering index.html and version variations), False otherwise
+    """
+    # Direct match
+    if user_url == inv_url:
+        return True
+
+    # Handle index.html variations
+    # Try adding/removing index.html
+    variants = [user_url]
+    if user_url.endswith("/index.html"):
+        variants.append(user_url[:-10])  # Remove index.html, keep /
+    elif user_url.endswith("/"):
+        variants.append(user_url + "index.html")
+    else:
+        variants.append(user_url + "/index.html")
+
+    # Check direct matches with variants
+    if inv_url in variants:
+        return True
+
+    # Normalize for version-specific matching
+    inv_url_normalized = _normalize_url_for_matching(inv_url).rstrip("/").replace("/index.html", "")
+    for variant in variants:
+        variant_normalized = _normalize_url_for_matching(variant).rstrip("/").replace("/index.html", "")
+        if variant_normalized == inv_url_normalized:
+            return True
+
+    return False
+
+
 def _do_reverse_lookup(
     urls: list[str],
 ) -> list[ReverseLookupResult]:
@@ -137,31 +181,20 @@ def _do_reverse_lookup(
     -------
     list[ReverseLookupResult]
         List of ReverseLookupResult named tuples with fields:
-        url, package, domain, rst_entry, display_name, is_fuzzy_match
+        url, package, domain, rst_entry, display_name
     """
     _install_cache()
 
     registry_file = Path(__file__).parent / "registry.json"
     registry = json.loads(registry_file.read_bytes())
 
-    package_urls: dict[str, list[tuple[str, str, str | None]]] = {}
+    package_urls: dict[str, list[str]] = {}
 
     for url_str in urls:
-        base_str = url_str
-        if url_str.endswith("/index.html"):
-            url_str_index = url_str
-            url_str = url_str[:-10]  # remove index.html, keep /
-        elif url_str.endswith("/"):
-            url_str_index = url_str + "index.html"
-        else:
-            url_str_index = None
-
         matched = False
         for package, (base_url, obj_path) in registry.items():
             if url_str.startswith(base_url):
-                package_urls.setdefault(package, []).append(
-                    (base_str, url_str, url_str_index)
-                )
+                package_urls.setdefault(package, []).append(url_str)
                 matched = True
                 break
 
@@ -182,9 +215,7 @@ def _do_reverse_lookup(
                     if url_path_normalized.startswith(
                         base_path_normalized
                     ) or base_path_normalized.startswith(url_path_normalized):
-                        package_urls.setdefault(package, []).append(
-                            (base_str, url_str, url_str_index)
-                        )
+                        package_urls.setdefault(package, []).append(url_str)
                         break
 
     results: list[ReverseLookupResult] = []
@@ -203,9 +234,9 @@ def _do_reverse_lookup(
                 UserWarning,
                 stacklevel=2,
             )
-            for base_str, url_str, url_str_index in url_list:
+            for url_str in url_list:
                 results.append(
-                    ReverseLookupResult(url_str, package, None, None, None, False)
+                    ReverseLookupResult(url_str, package, None, None, None)
                 )
             continue
 
@@ -214,15 +245,15 @@ def _do_reverse_lookup(
             for entry, item in v.items():
                 inv_urls[item.uri] = (key, entry, item.display_name)
 
-        for base_str, url_str, url_str_index in url_list:
+        for url_str in url_list:
             found = False
 
-            for check_url in [url_str, url_str_index]:
-                if check_url and check_url in inv_urls:
-                    key, entry, display_name = inv_urls[check_url]
+            # Use uri_match to check if the URL matches any inventory entry
+            for inv_uri, (key, entry, display_name) in inv_urls.items():
+                if uri_match(url_str, inv_uri):
                     results.append(
                         ReverseLookupResult(
-                            base_str, package, key, entry, display_name, False
+                            url_str, package, key, entry, display_name
                         )
                     )
                     found = True
@@ -230,7 +261,7 @@ def _do_reverse_lookup(
 
             if not found:
                 results.append(
-                    ReverseLookupResult(url_str, package, None, None, None, False)
+                    ReverseLookupResult(url_str, package, None, None, None)
                 )
 
     return results
@@ -335,10 +366,10 @@ def _compute_replacement(
     # Build the full rst reference: :domain:role:`target`
     rst_ref = f":{lookup_result.domain}:`{target}`"
 
-    # Check for full RST link with custom text: `text <URL>`_
+    # Check for full RST link with custom text: `text <URL>`_ or `text <URL>`__
     # Convert to :domain:role:`text <target>` format
     full_link_match = re.search(
-        r"`([^`<>]+)\s*<" + re.escape(lookup_result.url) + r">`_", original.target_line
+        r"`([^`<>]+)\s*<" + re.escape(lookup_result.url) + r">`__?", original.target_line
     )
     if full_link_match:
         # Preserve the custom link text
@@ -351,9 +382,9 @@ def _compute_replacement(
             original.context_after,
         )
 
-    # Check for simple RST link: <URL>`_ or `<URL>`_
+    # Check for simple RST link: <URL>`_ or `<URL>`_ or <URL>`__ or `<URL>`__
     # This could be a single-line or multi-line link
-    simple_link_match = re.search(r"`?<" + re.escape(lookup_result.url) + r">`_", original.target_line)
+    simple_link_match = re.search(r"`?<" + re.escape(lookup_result.url) + r">`__?", original.target_line)
     if simple_link_match:
         original_text = simple_link_match.group(0)
 
@@ -507,18 +538,68 @@ def rev_search(directory: str):
             print(f"     {GREEN}+ {replacement.replacement_line}{RESET}")
         else:
             url = url_match.group(0).rstrip(".,;:!?)")
-            url_pos = replacement.original_line.find(url)
 
+            # Check if we have a link with custom text that's being preserved
+            # Pattern: `text <URL>`_ -> :domain:role:`text <target>`
+            link_with_text_match = re.search(
+                r"`([^`<>]+)\s*<" + re.escape(url) + r">`__?",
+                replacement.original_line,
+            )
+            replacement_with_text_match = re.search(
+                r":([\w:]+):`([^`<>]+)\s*<([^>]+)>`",
+                replacement.replacement_line,
+            )
+
+            if link_with_text_match and replacement_with_text_match:
+                # We have preserved link text - highlight only the changed parts
+                orig_link_text = link_with_text_match.group(1).strip()
+                rep_link_text = replacement_with_text_match.group(2).strip()
+
+                # Only use smart highlighting if the link text is actually preserved
+                if orig_link_text == rep_link_text:
+                    # Find positions
+                    orig_full = link_with_text_match.group(0)
+                    orig_pos = replacement.original_line.find(orig_full)
+                    before = replacement.original_line[:orig_pos]
+                    after = replacement.original_line[orig_pos + len(orig_full):]
+
+                    rep_full = replacement_with_text_match.group(0)
+                    rep_pos = replacement.replacement_line.find(rep_full)
+                    rep_before = replacement.replacement_line[:rep_pos]
+                    rep_after = replacement.replacement_line[rep_pos + len(rep_full):]
+
+                    # Extract the parts for smart highlighting
+                    # Original: `text <URL>`_
+                    # Replacement: :domain:role:`text <target>`
+                    domain_role = replacement_with_text_match.group(1)
+                    target = replacement_with_text_match.group(3)
+
+                    # Build highlighted versions
+                    # Original: highlight opening `, URL, and closing >`_
+                    orig_highlighted = f"{RED_BG}`{RESET}{orig_link_text} {RED_BG}<{url}>`__{RESET}" if orig_full.endswith("__") else f"{RED_BG}`{RESET}{orig_link_text} {RED_BG}<{url}>`_{RESET}"
+
+                    # Replacement: highlight opening :domain:role:`, target, and closing >`
+                    rep_highlighted = f"{GREEN_BG}:{domain_role}:`{RESET}{rep_link_text} {GREEN_BG}<{target}>`{RESET}"
+
+                    after_with_color = f"{RED}{after}" if after else ""
+                    rep_after_with_color = f"{GREEN}{rep_after}" if rep_after else ""
+
+                    print(f"     {RED}- {before}{orig_highlighted}{after_with_color}{RESET}")
+                    print(f"     {GREEN}+ {rep_before}{rep_highlighted}{rep_after_with_color}{RESET}")
+                    continue
+
+            # Fall back to original highlighting logic
+            url_pos = replacement.original_line.find(url)
             before = replacement.original_line[:url_pos]
             after = replacement.original_line[url_pos + len(url) :]
 
             original_text = url
             link_match = re.search(
-                r"`([^`<>]+)\s*<" + re.escape(url) + r">`_",
+                r"`([^`<>]+)\s*<" + re.escape(url) + r">`__?",
                 replacement.original_line,
             )
             simple_link_match = re.search(
-                r"<" + re.escape(url) + r">`_", replacement.original_line
+                r"<" + re.escape(url) + r">`__?", replacement.original_line
             )
 
             if link_match:
@@ -552,7 +633,7 @@ def rev_search(directory: str):
                     rep_after = replacement.replacement_line[rep_pos + len(rep_text) :]
                 else:
                     link_rep_match = re.search(
-                        r"`[^`]+<:\w+:\w+:`[^`]+`>`_", replacement.replacement_line
+                        r":`[^`]+<[^>]+>`", replacement.replacement_line
                     )
                     if link_rep_match:
                         rep_text = link_rep_match.group(0)
