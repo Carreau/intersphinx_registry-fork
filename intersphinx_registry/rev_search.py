@@ -254,8 +254,10 @@ def _compute_replacement(
     context_before_str = original.context_before
     context_after_str = original.context_after
 
+    # Allow optional trailing punctuation before the closing >
+    # The URL in the text might have trailing punctuation that was stripped during lookup
     full_link_match = re.search(
-        r"`([^`<>]+)\s*<" + re.escape(lookup_result.url) + r">`__?", original_line
+        r"`([^`<>]+)\s*<" + re.escape(lookup_result.url) + r"[.,;:!?)]*>`__?", original_line
     )
     if full_link_match:
         link_text = full_link_match.group(1).strip()
@@ -308,8 +310,9 @@ def _compute_replacement(
             context_new,
         )
 
+    # Allow optional trailing punctuation before the closing >
     simple_link_match = re.search(
-        r"`?<" + re.escape(lookup_result.url) + r">`__?", original_line
+        r"`?<" + re.escape(lookup_result.url) + r"[.,;:!?)]*>`__?", original_line
     )
     if simple_link_match:
         original_text = simple_link_match.group(0)
@@ -416,8 +419,8 @@ def _compute_replacement(
             context_new,
         )
 
-    # Find the URL in the original line
-    url_match = re.search(re.escape(lookup_result.url), original_line)
+    # Find the URL in the original line (allow optional trailing punctuation)
+    url_match = re.search(re.escape(lookup_result.url) + r"[.,;:!?)]*", original_line)
     if url_match:
         start_idx = url_match.start()
         end_idx = url_match.end()
