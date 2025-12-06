@@ -124,4 +124,4 @@ from intersphinx_registry.lookup import (
 def test_compute_replacement(original, lookup_result, expected):
     """Test _compute_replacement with various URL patterns."""
     result = _compute_replacement(original, lookup_result)
-    assert result == expected
+    assert result.context == expected
