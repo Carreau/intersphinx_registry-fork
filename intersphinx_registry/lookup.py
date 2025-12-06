@@ -489,10 +489,11 @@ def _find_url_replacements(directory: str):
         results = _do_reverse_lookup(urls)
 
         # Keep ReverseLookupResult objects, pair them with their line locations
+        # Include both found entries and package-only matches (no entry)
         replaceable = [
             (result, url_locations[result.url])
             for result in results
-            if result.rst_entry is not None
+            if result.package is not None  # Changed from rst_entry to package
         ]
 
         if not replaceable:
@@ -506,22 +507,33 @@ def _find_url_replacements(directory: str):
                 context_before = all_lines[line_num - 2].rstrip() if line_num > 1 else None
                 context_after = all_lines[line_num].rstrip() if line_num < len(all_lines) else None
 
-                # Create the original lines tuple
-                original = ReplacementContext(context_before, original_line, context_after)
+                if lookup_result.rst_entry is not None:
+                    # Found a matching entry - compute replacement
+                    original = ReplacementContext(context_before, original_line, context_after)
+                    replacement_info = _compute_replacement(original, lookup_result)
 
-                # Compute replacement
-                replacement_info = _compute_replacement(original, lookup_result)
-
-                yield UrlReplacement(
-                    filepath,
-                    line_num,
-                    original_line,
-                    replacement_info.context.target_line,
-                    context_before,  # Original context_before
-                    replacement_info.context.context_before,  # Modified context_before
-                    replacement_info.context.context_after,
-                    replacement_info.preserved_text,
-                )
+                    yield UrlReplacement(
+                        filepath,
+                        line_num,
+                        original_line,
+                        replacement_info.context.target_line,
+                        context_before,  # Original context_before
+                        replacement_info.context.context_before,  # Modified context_before
+                        replacement_info.context.context_after,
+                        replacement_info.preserved_text,
+                    )
+                else:
+                    # Found package but no entry - yield with None replacement
+                    yield UrlReplacement(
+                        filepath,
+                        line_num,
+                        original_line,
+                        None,  # No replacement available
+                        context_before,
+                        context_before,  # Unchanged
+                        context_after,
+                        None,  # No preserved text
+                    )
 
 
 def rev_search(directory: str):
@@ -539,8 +551,10 @@ def rev_search(directory: str):
     RED = "\033[31m"
     GREEN = "\033[32m"
     CYAN = "\033[36m"
+    BLUE = "\033[34m"
     RED_BG = "\033[41;37m"
     GREEN_BG = "\033[42;30m"
+    BLUE_BG = "\033[44;37m"
     RESET = "\033[0m"
 
     found_any = False
@@ -549,6 +563,53 @@ def rev_search(directory: str):
             found_any = True
         display_path = _compress_user_path(replacement.filepath)
         print(f"{CYAN}{display_path}:{replacement.line_num}{RESET}")
+
+        # Check if this is a "package found but no entry" case
+        if replacement.replacement_line is None:
+            # Blue highlighting for package matches with no specific entry
+            if replacement.original_context_before is not None:
+                print(f"       {replacement.original_context_before}")
+
+            url_match = re.search(
+                r"https?://[^\s<>\"{}|\\^`\[\]]+", replacement.original_line
+            )
+            if url_match:
+                url = url_match.group(0).rstrip(".,;:!?)")
+                url_pos = replacement.original_line.find(url)
+                before = replacement.original_line[:url_pos]
+                after = replacement.original_line[url_pos + len(url):]
+
+                # Check for RST link patterns
+                link_match = re.search(
+                    r"`([^`<>]+)\s*<" + re.escape(url) + r">`__?",
+                    replacement.original_line,
+                )
+                simple_link_match = re.search(
+                    r"<" + re.escape(url) + r">`__?", replacement.original_line
+                )
+
+                if link_match:
+                    original_text = link_match.group(0)
+                    url_pos = replacement.original_line.find(original_text)
+                    before = replacement.original_line[:url_pos]
+                    after = replacement.original_line[url_pos + len(original_text):]
+                    print(f"     {BLUE}? {before}{BLUE_BG}{original_text}{RESET}{BLUE}{after}{RESET}")
+                elif simple_link_match:
+                    original_text = simple_link_match.group(0)
+                    url_pos = replacement.original_line.find(original_text)
+                    before = replacement.original_line[:url_pos]
+                    after = replacement.original_line[url_pos + len(original_text):]
+                    print(f"     {BLUE}? {before}{BLUE_BG}{original_text}{RESET}{BLUE}{after}{RESET}")
+                else:
+                    print(f"     {BLUE}? {before}{BLUE_BG}{url}{RESET}{BLUE}{after}{RESET}")
+            else:
+                print(f"     {BLUE}? {replacement.original_line}{RESET}")
+
+            if replacement.context_after is not None:
+                print(f"       {replacement.context_after}")
+
+            print()
+            continue
 
         # Check if we have preserved text for smart highlighting
         if replacement.preserved_text:
