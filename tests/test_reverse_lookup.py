@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from intersphinx_registry.lookup import _compute_replacement, _find_url_replacements
+from intersphinx_registry.lookup import _find_url_replacements
 
 
 @pytest.mark.parametrize(
@@ -136,31 +136,101 @@ def test_non_replaceable_url():
         assert len(replacements) == 0, "Should find no replacements for unknown URLs"
 
 
-def test_compute_replacement_simple():
-    """Test _compute_replacement with a simple URL."""
-    original = "See https://docs.python.org/3/library/os.html for details"
-    url = "https://docs.python.org/3/library/os.html"
-    rst_ref = ":std:doc:`python:library/os`"
-    result = _compute_replacement(original, url, rst_ref, "os module", "library/os")
-    assert rst_ref in result or "os module" in result
+@pytest.mark.parametrize(
+    "original_line,url,rst_ref,rst_entry,expected",
+    [
+        # Simple URL in text - should wrap with link using rst_entry
+        (
+            "See https://docs.python.org/3/library/os.html for details",
+            "https://docs.python.org/3/library/os.html",
+            ":std:doc:`python:library/os`",
+            "library/os",
+            "See `library/os <:std:doc:`python:library/os`>`_ for details",
+        ),
+        # URL with trailing punctuation
+        (
+            "Check https://docs.python.org/3/library/os.html.",
+            "https://docs.python.org/3/library/os.html",
+            ":std:doc:`python:library/os`",
+            "library/os",
+            "Check `library/os <:std:doc:`python:library/os`>`_.",
+        ),
+        # Full RST link with custom text - preserve the custom text
+        (
+            "See `Python docs <https://docs.python.org/3/library/os.html>`_ for details",
+            "https://docs.python.org/3/library/os.html",
+            ":std:doc:`python:library/os`",
+            "library/os",
+            "See `Python docs <:std:doc:`python:library/os`>`_ for details",
+        ),
+        # Simple RST link <URL>`_ - use rst_entry as link text
+        (
+            "See <https://docs.python.org/3/library/os.html>`_ for details",
+            "https://docs.python.org/3/library/os.html",
+            ":std:doc:`python:library/os`",
+            "library/os",
+            "See `library/os <:std:doc:`python:library/os`>`_ for details",
+        ),
+        # URL at start of line
+        (
+            "https://docs.python.org/3/library/os.html is the documentation",
+            "https://docs.python.org/3/library/os.html",
+            ":std:doc:`python:library/os`",
+            "library/os",
+            "`library/os <:std:doc:`python:library/os`>`_ is the documentation",
+        ),
+        # URL at end of line
+        (
+            "See documentation at https://docs.python.org/3/library/os.html",
+            "https://docs.python.org/3/library/os.html",
+            ":std:doc:`python:library/os`",
+            "library/os",
+            "See documentation at `library/os <:std:doc:`python:library/os`>`_",
+        ),
+        # Multi-line RST link (link text on different line) - treated as simple link
+        (
+            "<https://devguide.python.org/getting-started/setup-building/>`_ on this topic for",
+            "https://devguide.python.org/getting-started/setup-building/",
+            ":std:doc:`devguide:getting-started/setup-building`",
+            "getting-started/setup-building",
+            "`getting-started/setup-building <:std:doc:`devguide:getting-started/setup-building`>`_ on this topic for",
+        ),
+        # Another multi-line example
+        (
+            "<https://docs.python.org/3/howto/free-threading-python.html>`_ that is 3.14 or",
+            "https://docs.python.org/3/howto/free-threading-python.html",
+            ":std:doc:`python:howto/free-threading-python`",
+            "howto/free-threading-python",
+            "`howto/free-threading-python <:std:doc:`python:howto/free-threading-python`>`_ that is 3.14 or",
+        ),
+    ],
+    ids=[
+        "simple_url",
+        "url_with_punctuation",
+        "full_rst_link_preserves_text",
+        "simple_rst_link",
+        "url_at_start",
+        "url_at_end",
+        "multiline_devguide",
+        "multiline_python",
+    ],
+)
+def test_compute_replacement(original_line, url, rst_ref, rst_entry, expected):
+    """Test _compute_replacement with various URL patterns."""
+    from intersphinx_registry.lookup import _compute_replacement
 
-
-def test_compute_replacement_rst_link():
-    """Test _compute_replacement with an RST link."""
-    original = "See `Python docs <https://docs.python.org/3/library/os.html>`_ for details"
-    url = "https://docs.python.org/3/library/os.html"
-    rst_ref = ":std:doc:`python:library/os`"
-    result = _compute_replacement(original, url, rst_ref, "os module", "library/os")
-    assert "Python docs" in result
-    assert rst_ref in result
+    result = _compute_replacement(original_line, url, rst_ref, rst_entry)
+    assert result == expected
 
 
 def test_devguide_multiline_link():
     """Test replacement of a multi-line RST link from Python devguide.
 
-    Note: Current implementation processes line-by-line, so multi-line RST links
-    are treated as simple links (the link text on previous line is not detected).
-    This test documents the current behavior.
+    Expected output format:
+       See the `section in the Python developer's guide
+     - <https://devguide.python.org/getting-started/setup-building/>`_ on this topic for
+     + <:std:doc:`devguide:getting-started/setup-building>`_ on this topic for
+       more information about building Python from source. To enable address sanitizer,
     """
     content = """See the `section in the Python developer's guide
 <https://devguide.python.org/getting-started/setup-building/>`_ on this topic for
@@ -178,14 +248,44 @@ more information about building Python from source. To enable address sanitizer,
 
         replacement = replacements[0]
 
-        # Since the link text is on a different line, it's treated as a simple link
-        # The replacement uses the rst_entry as the link text
-        assert "getting-started/setup-building" in replacement.replacement_line
-        # Check that it contains the intersphinx reference
-        assert ":std:doc:`devguide:getting-started/setup-building`" in replacement.replacement_line
-        # The URL should be replaced
-        assert "devguide.python.org" not in replacement.replacement_line
+        # Verify the exact lines
+        assert replacement.original_line == "<https://devguide.python.org/getting-started/setup-building/>`_ on this topic for"
+        assert replacement.replacement_line == "`getting-started/setup-building <:std:doc:`devguide:getting-started/setup-building`>`_ on this topic for"
 
-        # Verify we have context lines
+        # Verify context lines
         assert replacement.context_before == "See the `section in the Python developer's guide"
         assert replacement.context_after == "more information about building Python from source. To enable address sanitizer,"
+
+
+def test_python_free_threading_multiline_link():
+    """Test replacement of a multi-line RST link for Python free-threading docs.
+
+    Expected output format:
+       Ideally you should run ``pytest-run-parallel`` using a `free-threaded build of Python
+     - <https://docs.python.org/3/howto/free-threading-python.html>`_ that is 3.14 or
+     + <:std:doc:`python:howto/free-threading-python>`_ that is 3.14 or
+       higher. If you decide to use a version of Python that is not free-threaded, you will
+    """
+    content = """Ideally you should run ``pytest-run-parallel`` using a `free-threaded build of Python
+<https://docs.python.org/3/howto/free-threading-python.html>`_ that is 3.14 or
+higher. If you decide to use a version of Python that is not free-threaded, you will"""
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        rst_file = Path(tmpdir) / "test.rst"
+        rst_file.write_text(content)
+
+        replacements = list(_find_url_replacements(str(rst_file)))
+
+        # Should find the URL
+        if not replacements:
+            pytest.skip("URL not found in registry or no replacement available")
+
+        replacement = replacements[0]
+
+        # Verify the exact lines
+        assert replacement.original_line == "<https://docs.python.org/3/howto/free-threading-python.html>`_ that is 3.14 or"
+        assert replacement.replacement_line == "`howto/free-threading-python <:std:doc:`python:howto/free-threading-python`>`_ that is 3.14 or"
+
+        # Verify context lines showing the original link text
+        assert replacement.context_before == "Ideally you should run ``pytest-run-parallel`` using a `free-threaded build of Python"
+        assert replacement.context_after == "higher. If you decide to use a version of Python that is not free-threaded, you will"

@@ -305,7 +305,7 @@ def reverse_lookup(urls: list[str]):
 
 
 def _compute_replacement(
-    original_line: str, url: str, rst_ref: str, display_name: str, rst_entry: str
+    original_line: str, url: str, rst_ref: str, rst_entry: str
 ) -> str:
     """
     Compute the replacement line for a URL in an RST file.
@@ -318,8 +318,6 @@ def _compute_replacement(
         The URL to replace
     rst_ref : str
         The RST reference to replace with (e.g., :py:module:`python:os`)
-    display_name : str
-        Display name from intersphinx inventory
     rst_entry : str
         The entry name from intersphinx
 
@@ -328,42 +326,28 @@ def _compute_replacement(
     str
         The replacement line
     """
-    url_pos = original_line.find(url)
-    if url_pos == -1:
-        return original_line.replace(url, rst_ref)
-
-    before = original_line[:url_pos]
-    after = original_line[url_pos + len(url) :]
-
-    replacement = rst_ref
-    original_text = url
-
-    link_match = re.search(r"`([^`<>]+)\s*<" + re.escape(url) + r">`_", original_line)
-    simple_link_match = re.search(r"<" + re.escape(url) + r">`_", original_line)
-
-    if link_match:
-        link_text = link_match.group(1).strip()
-        original_text = link_match.group(0)
+    # Check for full RST link with custom text: `text <URL>`_
+    full_link_match = re.search(
+        r"`([^`<>]+)\s*<" + re.escape(url) + r">`_", original_line
+    )
+    if full_link_match:
+        # Preserve the custom link text
+        link_text = full_link_match.group(1).strip()
+        original_text = full_link_match.group(0)
         replacement = f"`{link_text} <{rst_ref}>`_"
-        url_pos = original_line.find(original_text)
-        before = original_line[:url_pos]
-        after = original_line[url_pos + len(original_text) :]
-    elif simple_link_match:
+        return original_line.replace(original_text, replacement)
+
+    # Check for simple RST link: <URL>`_
+    simple_link_match = re.search(r"<" + re.escape(url) + r">`_", original_line)
+    if simple_link_match:
+        # Use rst_entry as link text
         original_text = simple_link_match.group(0)
         replacement = f"`{rst_entry} <{rst_ref}>`_"
-        url_pos = original_line.find(original_text)
-        before = original_line[:url_pos]
-        after = original_line[url_pos + len(original_text) :]
-    elif before and before[-1] == "<":
-        replacement = rst_ref
-    elif re.search(r":\w+:`[^`]*" + re.escape(url), original_line):
-        replacement = rst_ref
-    elif re.search(r"\.\.\s+\w+::", original_line):
-        replacement = rst_ref
-    else:
-        replacement = f"`{rst_entry} <{rst_ref}>`_"
+        return original_line.replace(original_text, replacement)
 
-    return before + replacement + after
+    # Plain URL - wrap it with link using rst_entry as text
+    replacement = f"`{rst_entry} <{rst_ref}>`_"
+    return original_line.replace(url, replacement)
 
 
 def _find_url_replacements(directory: str):
@@ -442,7 +426,7 @@ def _find_url_replacements(directory: str):
 
             for line_num, original_line in line_infos:
                 replacement_line = _compute_replacement(
-                    original_line, url, rst_ref, display_name, rst_entry
+                    original_line, url, rst_ref, rst_entry
                 )
 
                 # Get context lines (1 before and 1 after)
