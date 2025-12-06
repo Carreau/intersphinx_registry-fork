@@ -1,96 +1,21 @@
 import json
-import re
 import shutil
 import sys
-import warnings
-from collections import namedtuple
-from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
-import platformdirs
 import requests
-import requests_cache
 from sphinx.util.inventory import InventoryFile
 
 from . import __version__, get_intersphinx_mapping
-
-
-def _compress_user_path(path: str) -> str:
-    """
-    Replace home directory with ~ in a path string.
-
-    Parameters
-    ----------
-    path : str
-        Path to compress
-
-    Returns
-    -------
-    str
-        Path with home directory replaced by ~
-    """
-    home = str(Path.home())
-    if path.startswith(home):
-        return path.replace(home, "~", 1)
-    return path
-
-
-def _get_cache_dir() -> Path:
-    """
-    Get the cache directory for the current version of intersphinx_registry.
-
-    Returns
-    -------
-    Path
-        Cache directory path with version subdirectory
-    """
-    base_cache_dir = Path(platformdirs.user_cache_dir("intersphinx_registry"))
-    cache_dir = base_cache_dir / __version__
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
-    return cache_dir
-
-
-def _cleanup_old_caches():
-    """
-    Remove cache directories from old versions of intersphinx_registry.
-    Only keeps the current version's cache.
-    """
-    base_cache_dir = Path(platformdirs.user_cache_dir("intersphinx_registry"))
-
-    if not base_cache_dir.exists():
-        return
-
-    current_version = __version__
-
-    for version_dir in base_cache_dir.iterdir():
-        if version_dir.is_dir() and version_dir.name != current_version:
-            try:
-                shutil.rmtree(version_dir)
-            except Exception:
-                pass
-
-
-def _install_cache():
-    """
-    Install the version-specific requests cache.
-    Cleans up old caches on first use.
-    """
-    _cleanup_old_caches()
-
-    cache_dir = _get_cache_dir()
-    cache_path = cache_dir / "intersphinx_cache.sqlite"
-
-    requests_cache.install_cache(
-        str(cache_path),
-        backend="sqlite",
-        expire_after=timedelta(hours=6),
-        stale_if_error=True,
-        cache_control=True,
-    )
+from .utils import (
+    _are_dependencies_available,
+    _compress_user_path,
+    _get_cache_dir,
+    _install_cache,
+)
 
 
 def clear_cache() -> None:
@@ -137,8 +62,6 @@ def get_info() -> dict[str, str]:
 
 def print_info() -> None:
     """Print information about the intersphinx-registry installation."""
-    from .rev_search import _compress_user_path
-
     info = get_info()
 
     cache_location = _compress_user_path(info["cache_location"])
@@ -156,48 +79,7 @@ def print_info() -> None:
         print(f"Packages in registry:  Error reading registry ({e})")
 
 
-def _are_dependencies_available() -> bool:
-    """
-    Check if CLI dependencies are missing or not.
-    Returns True if all dependencies are available, False otherwise.
-    """
-    missing = []
-    try:
-        import sphinx  # noqa: F401
-    except ModuleNotFoundError:
-        missing.append("sphinx")
-
-    try:
-        import requests  # noqa: F401
-    except ModuleNotFoundError:
-        missing.append("requests")
-
-    try:
-        import requests_cache  # noqa: F401
-    except ModuleNotFoundError:
-        missing.append("requests-cache")
-
-    try:
-        import platformdirs  # noqa: F401
-    except ModuleNotFoundError:
-        missing.append("platformdirs")
-
-    if missing:
-        print(
-            "ERROR: the lookup functionality requires additional dependencies.",
-            file=sys.stderr,
-        )
-        print(
-            "Please install with: pip install 'intersphinx_registry[cli]'",
-            file=sys.stderr,
-        )
-        print(f"Missing dependencies: {', '.join(missing)}", file=sys.stderr)
-        return False
-
-    return True
-
-
-def lookup_packages(packages_str: str, search_term: Optional[str] = None):
+def lookup_packages(packages_str: str, search_term: Optional[str] = None) -> None:
     """
     Look up intersphinx targets for specified packages.
 
@@ -224,9 +106,16 @@ def lookup_packages(packages_str: str, search_term: Optional[str] = None):
     for base_url, obj in urls:
         final_url = urljoin(base_url, obj)
 
-        resp = requests.get(final_url)
-
-        inv = InventoryFile.load(BytesIO(resp.content), base_url, urljoin)
+        try:
+            resp = requests.get(final_url, timeout=30)
+            resp.raise_for_status()
+            inv = InventoryFile.load(BytesIO(resp.content), base_url, urljoin)
+        except requests.RequestException as e:
+            print(f"Warning: Failed to fetch {final_url}: {e}", file=sys.stderr)
+            continue
+        except Exception as e:
+            print(f"Warning: Failed to load inventory from {final_url}: {e}", file=sys.stderr)
+            continue
 
         for key, v in inv.items():
             inv_entries = sorted(v.items())
@@ -234,9 +123,6 @@ def lookup_packages(packages_str: str, search_term: Optional[str] = None):
                 flattened.append((key, entry, _proj, _ver, display_name, url_path))
 
     filtered = []
-
-    width = [len(x) for x in flattened[0]]
-
     for item in flattened:
         key, entry, proj, version, display_name, url_path = item
         if (
@@ -246,7 +132,14 @@ def lookup_packages(packages_str: str, search_term: Optional[str] = None):
             or (search_term in url_path)
         ):
             filtered.append((key, entry, proj, version, display_name, url_path))
-            width = [max(w, len(x)) for w, x in zip(width, item)]
+
+    if not filtered:
+        return
+
+    width = [0] * 6
+    for item in filtered:
+        for i, x in enumerate(item):
+            width[i] = max(width[i], len(str(x)))
 
     for key, entry, proj, version, display_name, url_path in filtered:
         w_key, w_entry, w_proj, w_version, w_di, w_url = width

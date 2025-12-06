@@ -1,5 +1,6 @@
 import json
 import re
+import sys
 import warnings
 from collections import namedtuple
 from io import BytesIO
@@ -9,7 +10,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 from sphinx.util.inventory import InventoryFile
 
-from .lookup import _are_dependencies_available, _install_cache
+from .utils import _are_dependencies_available, _install_cache
 
 ReverseLookupResult = namedtuple(
     "ReverseLookupResult",
@@ -171,7 +172,7 @@ def _do_reverse_lookup(
 
 def _print_reverse_lookup_results(
     results: list[ReverseLookupResult],
-):
+) -> None:
     """
     Print formatted reverse lookup results.
 
@@ -222,7 +223,7 @@ def _print_reverse_lookup_results(
             print(f"{result.url:<{width_url}}  {'NOT FOUND':<{width_rst}}")
 
 
-def reverse_lookup(urls: list[str]):
+def reverse_lookup(urls: list[str]) -> None:
     """
     Reverse lookup: given URLs, find which packages they belong to and their rst references.
 
@@ -232,7 +233,7 @@ def reverse_lookup(urls: list[str]):
         List of URLs
     """
     if not urls:
-        print("ERROR: No URLs provided")
+        print("ERROR: No URLs provided", file=sys.stderr)
         return
 
     if not _are_dependencies_available():

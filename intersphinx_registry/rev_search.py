@@ -2,8 +2,8 @@ import re
 from collections import namedtuple
 from pathlib import Path
 
-from .lookup import _are_dependencies_available
 from .reverse_lookup import ReverseLookupResult, _do_reverse_lookup
+from .utils import _are_dependencies_available, _compress_user_path
 
 UrlReplacement = namedtuple(
     "UrlReplacement",
@@ -20,26 +20,6 @@ ReplacementInfo = namedtuple(
     "ReplacementInfo",
     ["context", "preserved_text"],
 )
-
-
-def _compress_user_path(path: str) -> str:
-    """
-    Replace home directory with ~ in a path string.
-
-    Parameters
-    ----------
-    path : str
-        Path to compress
-
-    Returns
-    -------
-    str
-        Path with home directory replaced by ~
-    """
-    home = str(Path.home())
-    if path.startswith(home):
-        return path.replace(home, "~", 1)
-    return path
 
 
 def _compute_replacement(
@@ -212,7 +192,7 @@ def _find_url_replacements(directory: str):
                     )
 
 
-def rev_search(directory: str):
+def rev_search(directory: str) -> None:
     """
     Search for URLs in .rst files that can be replaced with Sphinx references.
 
