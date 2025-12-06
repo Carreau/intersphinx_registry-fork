@@ -273,33 +273,21 @@ def _compute_replacement(
         link_text = full_link_match.group(1).strip()
         original_text = full_link_match.group(0)
 
-        # Find the indexes where replacement should happen
         start_idx = full_link_match.start()
         end_idx = full_link_match.end()
-
-        # Extract the URL part from the original link
-        # Format: `link_text <URL>`__ or `link_text <URL>`_
-        # We want: Unchanged(`link_text <), Removed(URL), Unchanged(>), Removed(`__)
-        # New: Added(:std:doc:`), Unchanged(link_text), Unchanged( <) [if space exists], Added(target), Unchanged(`>)
         url_match_in_link = re.search(
             r"<" + re.escape(lookup_result.url) + r"[.,;:!?)]*>", original_text
         )
         if url_match_in_link:
-            url_start_in_link = url_match_in_link.start()  # Position of `<`
-            url_end_in_link = url_match_in_link.end()  # Position after `>`
+            url_start_in_link = url_match_in_link.start()
+            url_end_in_link = url_match_in_link.end()
+            url_only_start = url_start_in_link + 1
+            url_only_end = url_end_in_link - 1
 
-            # Find where the URL itself starts (after the `<`)
-            url_only_start = url_start_in_link + 1  # After `<`
-            # Find where the URL ends (before the `>`)
-            url_only_end = url_end_in_link - 1  # Before `>`
-
-            # Check if there's a space before `<` in the original
-            # Look at the character before `<` in original_text
             space_before_angle = ""
             if url_start_in_link > 0 and original_text[url_start_in_link - 1] == " ":
                 space_before_angle = " "
 
-            # Build target_tokens_old and target_tokens_new in parallel
             domain_prefix = f":{lookup_result.domain}:`"
 
             target_tokens_old: list[Token] = []
@@ -308,7 +296,6 @@ def _compute_replacement(
                 target_tokens_old.append(Unchanged(original_line[:start_idx]))
                 target_tokens_new.append(Unchanged(original_line[:start_idx]))
 
-            # Before URL in the link: `link_text < (opening backtick, link text, space if exists, opening <)
             before_url_in_link = original_text[:url_only_start]
             target_tokens_old.append(Unchanged(before_url_in_link))
             target_tokens_new.append(Added(domain_prefix))
@@ -318,31 +305,20 @@ def _compute_replacement(
             else:
                 target_tokens_new.append(Unchanged("<"))
 
-            # URL part: just the URL (removed)
             url_part = original_text[url_only_start:url_only_end]
             target_tokens_old.append(Removed(url_part))
 
-            # After URL in the link: `__ or `_ (closing backtick and underscores)
-            after_url_in_link = original_text[url_end_in_link:]  # This is "`__" or "`_"
-            # The closing backtick should be part of Unchanged(">`") in both old and new
-            # Only the underscores should be removed
+            after_url_in_link = original_text[url_end_in_link:]
             if after_url_in_link.startswith("`"):
-                closing_backtick = after_url_in_link[0]  # "`"
-                underscores = after_url_in_link[1:]  # "__" or "_"
-                # Closing `>` and backtick together (unchanged in both)
-                closing_angle = original_text[
-                    url_only_end:url_end_in_link
-                ]  # This is just ">"
+                closing_backtick = after_url_in_link[0]
+                underscores = after_url_in_link[1:]
+                closing_angle = original_text[url_only_end:url_end_in_link]
                 target_tokens_old.append(Unchanged(closing_angle + closing_backtick))
                 target_tokens_old.append(Removed(underscores))
-                # In new context: Added(target), then Unchanged(">`") (the > and closing backtick)
                 target_tokens_new.append(Added(target))
                 target_tokens_new.append(Unchanged(closing_angle + closing_backtick))
             else:
-                # Fallback: treat everything as removed
-                closing_angle = original_text[
-                    url_only_end:url_end_in_link
-                ]  # This is just ">"
+                closing_angle = original_text[url_only_end:url_end_in_link]
                 target_tokens_old.append(Unchanged(closing_angle))
                 target_tokens_old.append(Removed(after_url_in_link))
                 target_tokens_new.append(Added(target))
@@ -352,7 +328,6 @@ def _compute_replacement(
                 target_tokens_old.append(Unchanged(original_line[end_idx:]))
                 target_tokens_new.append(Unchanged(original_line[end_idx:]))
         else:
-            # Fallback: if we can't find the URL in the link, treat the whole thing as removed
             target_tokens_old = []
             target_tokens_new = []
             if start_idx > 0:
@@ -368,7 +343,6 @@ def _compute_replacement(
                 target_tokens_old.append(Unchanged(original_line[end_idx:]))
                 target_tokens_new.append(Unchanged(original_line[end_idx:]))
 
-        # Tokenize context_before and context_after (unchanged in this case)
         ctx_before_tokens_old = (Unchanged(context_before_str),)
         ctx_before_tokens_new = (Unchanged(context_before_str),)
 
@@ -405,11 +379,8 @@ def _compute_replacement(
         if link_text_match:
             link_text = link_text_match.group(1).strip()
 
-            # Find the index in context_before where replacement should happen
             ctx_match_start = link_text_match.start()
             ctx_match_end = link_text_match.end()
-
-            # Build ctx_before_tokens_old and ctx_before_tokens_new in parallel
             ctx_before_tokens_old_list: list[Token] = []
             ctx_before_tokens_new_list: list[Token] = []
             if ctx_match_start > 0:
@@ -434,7 +405,6 @@ def _compute_replacement(
                     Unchanged(context_before_str[ctx_match_end:])
                 )
 
-            # Build target_tokens_old and target_tokens_new in parallel
             target_tokens_old_list: list[Token] = []
             target_tokens_new_list: list[Token] = []
             if start_idx > 0:
@@ -446,7 +416,6 @@ def _compute_replacement(
                 target_tokens_old_list.append(Unchanged(original_line[end_idx:]))
                 target_tokens_new_list.append(Unchanged(original_line[end_idx:]))
 
-            # Tokenize context_after (unchanged in this case)
             ctx_after_tokens_old = (Unchanged(context_after_str),)
             ctx_after_tokens_new = (Unchanged(context_after_str),)
 
@@ -467,7 +436,6 @@ def _compute_replacement(
                 context_new,
             )
 
-        # Build target_tokens_old and target_tokens_new in parallel
         target_tokens_old_list2: list[Token] = []
         target_tokens_new_list2: list[Token] = []
         if start_idx > 0:
@@ -501,13 +469,11 @@ def _compute_replacement(
             context_new,
         )
 
-    # Find the URL in the original line (allow optional trailing punctuation)
     url_match = re.search(re.escape(lookup_result.url) + r"[.,;:!?)]*", original_line)
     if url_match:
         start_idx = url_match.start()
         end_idx = url_match.end()
 
-        # Build target_tokens_old and target_tokens_new in parallel
         target_tokens_old_list3: list[Token] = []
         target_tokens_new_list3: list[Token] = []
         if start_idx > 0:
@@ -519,7 +485,6 @@ def _compute_replacement(
             target_tokens_old_list3.append(Unchanged(original_line[end_idx:]))
             target_tokens_new_list3.append(Unchanged(original_line[end_idx:]))
     else:
-        # Fallback: entire line is replaced
         target_tokens_old_list3 = [Removed(original_line)]
         target_tokens_new_list3 = [Added(rst_ref)]
 
@@ -685,7 +650,6 @@ def format_tokens(
     # Add prefix with defaultFG color
     output += defaultFG + prefix + RESET + defaultFG
 
-    # Format tokens with appropriate highlighting
     for token in tokens:
         if isinstance(token, Added):
             output += f"{AddedHighlight}{str(token)}{RESET}{defaultFG}"
@@ -718,9 +682,7 @@ def rev_search(directory: str) -> None:
         display_path = _compress_user_path(replacement.filepath)
         print(f"{CYAN}{display_path}:{replacement.line_num}{RESET}")
 
-        # Check if no replacement available (context_old == context_new means no changes)
         if replacement.context_old == replacement.context_new:
-            # No replacement available - print old context only
             ctx_before_tokens_old, target_tokens_old, ctx_after_tokens_old = (
                 replacement.context_old
             )
@@ -736,7 +698,6 @@ def rev_search(directory: str) -> None:
             print()
             continue
 
-        # Extract tokens from old and new contexts
         ctx_before_tokens_old, target_tokens_old, ctx_after_tokens_old = (
             replacement.context_old
         )
@@ -744,12 +705,8 @@ def rev_search(directory: str) -> None:
             replacement.context_new
         )
 
-        # Print all old lines together (before and target)
-        # Print context_before (old) if it exists
         if ctx_before_tokens_old or ctx_before_tokens_new:
-            # Check if context_before changed
             if ctx_before_tokens_old != ctx_before_tokens_new:
-                # Print old context_before (removed)
                 print(
                     format_tokens(
                         ctx_before_tokens_old,
@@ -759,38 +716,29 @@ def rev_search(directory: str) -> None:
                     )
                 )
             else:
-                # Print unchanged context_before
                 print(format_tokens(ctx_before_tokens_old, "       "))
-
-        # Print target line: old (removed)
         print(
             format_tokens(
                 target_tokens_old, "     - ", defaultFG=RED, RemovedHighlight=RED_BG
             )
         )
 
-        # Print inventory URL if different from the URL in the line (between old and new sections)
         if replacement.inventory_url:
-            # Check if inventory_url appears in target_tokens_old
             old_text = "".join(
                 str(token)
                 for token in target_tokens_old
                 if not isinstance(token, Added)
             )
             if replacement.inventory_url not in old_text:
-                # Find position to align the inventory URL on "https://"
-                # Look for "https://" in the old text to align with
                 https_pos = old_text.find("https://")
                 if https_pos >= 0:
                     spaces = " " * (7 + https_pos)
                 else:
                     spaces = "       "
 
-                # Highlight differences between matched_url and inventory_url
                 matched_url = replacement.matched_url
                 inventory_url = replacement.inventory_url
 
-                # Find common prefix and suffix
                 prefix_len = 0
                 while (
                     prefix_len < len(matched_url)
@@ -808,9 +756,7 @@ def rev_search(directory: str) -> None:
                 ):
                     suffix_len += 1
 
-                # Build highlighted URL
                 if prefix_len > 0 or suffix_len > 0:
-                    # Has common parts
                     prefix = inventory_url[:prefix_len]
                     middle = (
                         inventory_url[prefix_len : len(inventory_url) - suffix_len]
@@ -818,19 +764,14 @@ def rev_search(directory: str) -> None:
                         else inventory_url[prefix_len:]
                     )
                     suffix = inventory_url[-suffix_len:] if suffix_len > 0 else ""
-
                     highlighted_url = f"{YELLOW}{prefix}{YELLOW_BG}{middle}{RESET}{YELLOW}{suffix}{RESET}"
                 else:
-                    # No common parts, highlight everything
                     highlighted_url = f"{YELLOW_BG}{inventory_url}{RESET}"
 
                 print(f"{spaces}{highlighted_url}")
 
-        # Print all new lines together (before and target)
-        # Print context_before (new) if it changed
         if ctx_before_tokens_old or ctx_before_tokens_new:
             if ctx_before_tokens_old != ctx_before_tokens_new:
-                # Print new context_before (added) with BG GREEN for Added tokens
                 print(
                     format_tokens(
                         ctx_before_tokens_new,
@@ -840,8 +781,6 @@ def rev_search(directory: str) -> None:
                         RemovedHighlight=RED_BG,
                     )
                 )
-
-        # Print target line: new (added) with BG GREEN for Added tokens
         print(
             format_tokens(
                 target_tokens_new,
@@ -852,11 +791,8 @@ def rev_search(directory: str) -> None:
             )
         )
 
-        # Print context_after at the end (old and new together)
         if ctx_after_tokens_old or ctx_after_tokens_new:
-            # Check if context_after changed
             if ctx_after_tokens_old != ctx_after_tokens_new:
-                # Print old context_after (removed)
                 print(
                     format_tokens(
                         ctx_after_tokens_old,
@@ -865,7 +801,6 @@ def rev_search(directory: str) -> None:
                         RemovedHighlight=RED_BG,
                     )
                 )
-                # Print new context_after (added) with BG GREEN for Added tokens
                 print(
                     format_tokens(
                         ctx_after_tokens_new,
@@ -876,7 +811,6 @@ def rev_search(directory: str) -> None:
                     )
                 )
             else:
-                # Print unchanged context_after
                 print(format_tokens(ctx_after_tokens_old, "       "))
 
         print()
