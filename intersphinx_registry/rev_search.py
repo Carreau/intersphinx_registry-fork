@@ -269,7 +269,8 @@ def _compute_replacement(
 
         # Extract the URL part from the original link
         # Format: `link_text <URL>`__ or `link_text <URL>`_
-        # We want: Unchanged(`link_text <), Removed(URL>), Removed(`__)
+        # We want: Unchanged(`link_text <), Removed(URL), Unchanged(>), Removed(`__)
+        # New: Added(:std:doc:`), Unchanged(link_text), Unchanged( <) [if space exists], Added(target), Unchanged(`>)
         url_match_in_link = re.search(r"<" + re.escape(lookup_result.url) + r"[.,;:!?)]*>", original_text)
         if url_match_in_link:
             url_start_in_link = url_match_in_link.start()  # Position of `<`
@@ -280,9 +281,14 @@ def _compute_replacement(
             # Find where the URL ends (before the `>`)
             url_only_end = url_end_in_link - 1  # Before `>`
             
+            # Check if there's a space before `<` in the original
+            # Look at the character before `<` in original_text
+            space_before_angle = ""
+            if url_start_in_link > 0 and original_text[url_start_in_link - 1] == " ":
+                space_before_angle = " "
+            
             # Build target_tokens_old and target_tokens_new in parallel
             domain_prefix = f":{lookup_result.domain}:`"
-            target_suffix = f" <{target}>`"
             
             target_tokens_old: list[Token] = []
             target_tokens_new: list[Token] = []
@@ -290,20 +296,41 @@ def _compute_replacement(
                 target_tokens_old.append(Unchanged(original_line[:start_idx]))
                 target_tokens_new.append(Unchanged(original_line[:start_idx]))
             
-            # Before URL in the link: `link_text < (opening backtick, link text, opening <)
+            # Before URL in the link: `link_text < (opening backtick, link text, space if exists, opening <)
             before_url_in_link = original_text[:url_only_start]
             target_tokens_old.append(Unchanged(before_url_in_link))
             target_tokens_new.append(Added(domain_prefix))
             target_tokens_new.append(Unchanged(link_text))
+            if space_before_angle:
+                target_tokens_new.append(Unchanged(space_before_angle + "<"))
+            else:
+                target_tokens_new.append(Unchanged("<"))
             
-            # URL part: URL> (just the URL and closing >, not the opening <)
-            url_part = original_text[url_only_start:url_end_in_link]
+            # URL part: just the URL (removed)
+            url_part = original_text[url_only_start:url_only_end]
             target_tokens_old.append(Removed(url_part))
             
             # After URL in the link: `__ or `_ (closing backtick and underscores)
-            after_url_in_link = original_text[url_end_in_link:]
-            target_tokens_old.append(Removed(after_url_in_link))
-            target_tokens_new.append(Added(target_suffix))
+            after_url_in_link = original_text[url_end_in_link:]  # This is "`__" or "`_"
+            # The closing backtick should be part of Unchanged(">`") in both old and new
+            # Only the underscores should be removed
+            if after_url_in_link.startswith("`"):
+                closing_backtick = after_url_in_link[0]  # "`"
+                underscores = after_url_in_link[1:]  # "__" or "_"
+                # Closing `>` and backtick together (unchanged in both)
+                closing_angle = original_text[url_only_end:url_end_in_link]  # This is just ">"
+                target_tokens_old.append(Unchanged(closing_angle + closing_backtick))
+                target_tokens_old.append(Removed(underscores))
+                # In new context: Added(target), then Unchanged(">`") (the > and closing backtick)
+                target_tokens_new.append(Added(target))
+                target_tokens_new.append(Unchanged(closing_angle + closing_backtick))
+            else:
+                # Fallback: treat everything as removed
+                closing_angle = original_text[url_only_end:url_end_in_link]  # This is just ">"
+                target_tokens_old.append(Unchanged(closing_angle))
+                target_tokens_old.append(Removed(after_url_in_link))
+                target_tokens_new.append(Added(target))
+                target_tokens_new.append(Unchanged(closing_angle))
             
             if end_idx < len(original_line):
                 target_tokens_old.append(Unchanged(original_line[end_idx:]))
