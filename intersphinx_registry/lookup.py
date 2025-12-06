@@ -17,7 +17,6 @@ from sphinx.util.inventory import InventoryFile
 
 from . import __version__, get_intersphinx_mapping
 
-# Named tuple for reverse lookup results
 ReverseLookupResult = namedtuple(
     "ReverseLookupResult",
     ["url", "package", "domain", "rst_entry", "display_name", "inventory_url"],
@@ -34,7 +33,6 @@ ReplacementContext = namedtuple(
     ["context_before", "target_line", "context_after"],
 )
 
-# Extended replacement info for better diff highlighting
 ReplacementInfo = namedtuple(
     "ReplacementInfo",
     ["context", "preserved_text"],
@@ -145,12 +143,9 @@ def uri_match(user_url: str, inv_url: str) -> bool:
     bool
         True if the URLs match (considering index.html and version variations), False otherwise
     """
-    # Direct match
     if user_url == inv_url:
         return True
 
-    # Handle index.html variations
-    # Try adding/removing index.html
     variants = [user_url]
     if user_url.endswith("/index.html"):
         variants.append(user_url[:-10])  # Remove index.html, keep /
@@ -159,11 +154,9 @@ def uri_match(user_url: str, inv_url: str) -> bool:
     else:
         variants.append(user_url + "/index.html")
 
-    # Check direct matches with variants
     if inv_url in variants:
         return True
 
-    # Normalize for version-specific matching
     inv_url_normalized = _normalize_url_for_matching(inv_url).rstrip("/").replace("/index.html", "")
     for variant in variants:
         variant_normalized = _normalize_url_for_matching(variant).rstrip("/").replace("/index.html", "")
@@ -255,7 +248,6 @@ def _do_reverse_lookup(
         for url_str in url_list:
             found = False
 
-            # Use uri_match to check if the URL matches any inventory entry
             for inv_uri, (key, entry, display_name) in inv_urls.items():
                 if uri_match(url_str, inv_uri):
                     results.append(
@@ -368,18 +360,13 @@ def _compute_replacement(
         - context: ReplacementContext with (context_before, target_line, context_after)
         - preserved_text: The link text if preserved, None otherwise
     """
-    # Build the reference target: package:entry
     target = f"{lookup_result.package}:{lookup_result.rst_entry}"
-    # Build the full rst reference: :domain:role:`target`
     rst_ref = f":{lookup_result.domain}:`{target}`"
 
-    # Check for full RST link with custom text: `text <URL>`_ or `text <URL>`__
-    # Convert to :domain:role:`text <target>` format
     full_link_match = re.search(
         r"`([^`<>]+)\s*<" + re.escape(lookup_result.url) + r">`__?", original.target_line
     )
     if full_link_match:
-        # Preserve the custom link text
         link_text = full_link_match.group(1).strip()
         original_text = full_link_match.group(0)
         replacement = f":{lookup_result.domain}:`{link_text} <{target}>`"
@@ -392,28 +379,19 @@ def _compute_replacement(
             link_text,  # Preserved text
         )
 
-    # Check for simple RST link: <URL>`_ or `<URL>`_ or <URL>`__ or `<URL>`__
-    # This could be a single-line or multi-line link
     simple_link_match = re.search(r"`?<" + re.escape(lookup_result.url) + r">`__?", original.target_line)
     if simple_link_match:
         original_text = simple_link_match.group(0)
 
-        # Check if this is part of a multi-line link by looking at the previous line
-        # Multi-line pattern: previous line contains `text at the end (not ending with `_)
         if original.context_before:
-            # Look for a backtick followed by text at the end of the line
             link_text_match = re.search(r"`([^`]+)$", original.context_before)
             if link_text_match:
-                # Multi-line link - need to modify both lines
-                # Preserve the link text
                 link_text = link_text_match.group(1).strip()
 
-                # Modify context_before: replace `link_text with :domain:role:`link_text
                 new_context_before = re.sub(
                     r"`([^`]+)$", f":{lookup_result.domain}:`\\1", original.context_before
                 )
 
-                # Modify current line: replace <URL>`_ with <target>`
                 new_line = original.target_line.replace(original_text, f"<{target}>`")
 
                 return ReplacementInfo(
@@ -421,7 +399,6 @@ def _compute_replacement(
                     link_text,  # Preserved text
                 )
 
-        # Single-line simple link - just replace with rst_ref
         return ReplacementInfo(
             ReplacementContext(
                 original.context_before,
@@ -431,7 +408,6 @@ def _compute_replacement(
             None,  # No preserved text
         )
 
-    # Plain URL - replace with just the rst_ref
     return ReplacementInfo(
         ReplacementContext(
             original.context_before,
@@ -488,8 +464,6 @@ def _find_url_replacements(directory: str):
         urls = list(url_locations.keys())
         results = _do_reverse_lookup(urls)
 
-        # Keep ReverseLookupResult objects, pair them with their line locations
-        # Include both found entries and package-only matches (no entry)
         replaceable = [
             (result, url_locations[result.url])
             for result in results
@@ -503,12 +477,10 @@ def _find_url_replacements(directory: str):
 
         for lookup_result, line_infos in replaceable:
             for line_num, original_line in line_infos:
-                # Get context lines (1 before and 1 after)
                 context_before = all_lines[line_num - 2].rstrip() if line_num > 1 else None
                 context_after = all_lines[line_num].rstrip() if line_num < len(all_lines) else None
 
                 if lookup_result.rst_entry is not None:
-                    # Found a matching entry - compute replacement
                     original = ReplacementContext(context_before, original_line, context_after)
                     replacement_info = _compute_replacement(original, lookup_result)
 
@@ -524,7 +496,6 @@ def _find_url_replacements(directory: str):
                         lookup_result.inventory_url,
                     )
                 else:
-                    # Found package but no entry - yield with None replacement
                     yield UrlReplacement(
                         filepath,
                         line_num,
@@ -568,9 +539,7 @@ def rev_search(directory: str):
         display_path = _compress_user_path(replacement.filepath)
         print(f"{CYAN}{display_path}:{replacement.line_num}{RESET}")
 
-        # Check if this is a "package found but no entry" case
         if replacement.replacement_line is None:
-            # Blue highlighting for package matches with no specific entry
             if replacement.original_context_before is not None:
                 print(f"       {replacement.original_context_before}")
 
@@ -583,7 +552,6 @@ def rev_search(directory: str):
                 before = replacement.original_line[:url_pos]
                 after = replacement.original_line[url_pos + len(url):]
 
-                # Check for RST link patterns
                 link_match = re.search(
                     r"`([^`<>]+)\s*<" + re.escape(url) + r">`__?",
                     replacement.original_line,
@@ -615,24 +583,15 @@ def rev_search(directory: str):
             print()
             continue
 
-        # Check if we have preserved text for smart highlighting
         if replacement.preserved_text:
-            # Check if this is a multi-line link (context_before changed)
             context_before_changed = (replacement.original_context_before is not None and
                                      replacement.context_before is not None and
                                      replacement.original_context_before != replacement.context_before)
 
-            # If context_before changed, print the diff for that line too
             if context_before_changed:
-                # Multi-line link: print old lines together, then new lines together
-                # This is more readable: old_before + old_line, then new_before + new_line
-
-                # Pattern: `text at end -> :domain:role:`text at end
                 orig_ctx_match = re.search(r"^(.+)`([^`]+)$", replacement.original_context_before)
-                # Use non-greedy match for the first group to avoid capturing the colon
                 rep_ctx_match = re.search(r"^(.+?):([\w:]+):`([^`]+)$", replacement.context_before)
 
-                # Highlight context_before line
                 if orig_ctx_match and rep_ctx_match:
                     orig_ctx_before_text = orig_ctx_match.group(1)
                     orig_ctx_link_text = orig_ctx_match.group(2)
@@ -643,20 +602,15 @@ def rev_search(directory: str):
                     orig_ctx_highlighted = f"{orig_ctx_before_text}{RED_BG}`{RESET}{RED}{orig_ctx_link_text}{RESET}"
                     rep_ctx_highlighted = f"{rep_ctx_before_text}{GREEN_BG}:{rep_ctx_domain_role}:`{RESET}{GREEN}{rep_ctx_link_text}{RESET}"
                 else:
-                    # Fallback if regex doesn't match
                     orig_ctx_highlighted = replacement.original_context_before
                     rep_ctx_highlighted = replacement.context_before
 
-                # Now handle the target line highlighting
                 url_match = re.search(
                     r"https?://[^\s<>\"{}|\\^`\[\]]+", replacement.original_line
                 )
                 if url_match:
                     url = url_match.group(0).rstrip(".,;:!?)")
 
-                    # For multi-line links, the target line has <URL>`_ pattern
-                    # Original: <URL>`_ or <URL>`__
-                    # Replacement: <target>`
                     orig_target_match = re.search(r"^(.*)(<" + re.escape(url) + r">`__?)(.*)$", replacement.original_line)
                     rep_target_match = re.search(r"^(.*)<([^>]+)>`(.*)$", replacement.replacement_line)
 
@@ -669,44 +623,34 @@ def rev_search(directory: str):
                         rep_target = rep_target_match.group(2)
                         rep_target_after = rep_target_match.group(3)
 
-                        # Highlight the target lines
                         orig_line_highlighted = f"{orig_target_before}{RED_BG}{orig_target_full}{RESET}{RED}{orig_target_after}{RESET}" if orig_target_after else f"{orig_target_before}{RED_BG}{orig_target_full}{RESET}"
                         rep_line_highlighted = f"{rep_target_before}{GREEN_BG}<{rep_target}>`{RESET}{GREEN}{rep_target_after}{RESET}" if rep_target_after else f"{rep_target_before}{GREEN_BG}<{rep_target}>`{RESET}"
 
-                        # Print old lines together
                         print(f"     {RED}- {orig_ctx_highlighted}{RESET}")
                         print(f"     {RED}- {orig_line_highlighted}{RESET}")
 
-                        # Check if URL differs from inventory URL (yellow line)
                         if replacement.inventory_url and url != replacement.inventory_url:
-                            # Find where https:// starts in the original line to align
                             url_pos_in_line = replacement.original_line.find(url)
-                            # Account for the "     - " prefix (7 chars)
                             spaces = " " * (7 + url_pos_in_line)
                             print(f"{spaces}{YELLOW}{YELLOW_BG}{replacement.inventory_url}{RESET}")
 
-                        # Print new lines together
                         print(f"     {GREEN}+ {rep_ctx_highlighted}{RESET}")
                         print(f"     {GREEN}+ {rep_line_highlighted}{RESET}")
 
-                        # Print context after
                         if replacement.context_after is not None:
                             print(f"       {replacement.context_after}")
 
                         print()
                         continue
             elif replacement.original_context_before is not None:
-                # Context before exists but unchanged - just print it
                 print(f"       {replacement.original_context_before}")
 
-            # Smart highlighting: show preserved text with foreground only (single-line links)
             url_match = re.search(
                 r"https?://[^\s<>\"{}|\\^`\[\]]+", replacement.original_line
             )
             if url_match:
                 url = url_match.group(0).rstrip(".,;:!?)")
 
-                # Find the full link pattern in original
                 link_match = re.search(
                     r"`([^`<>]+)\s*<" + re.escape(url) + r">`__?",
                     replacement.original_line,
@@ -717,10 +661,8 @@ def rev_search(directory: str):
                     before = replacement.original_line[:orig_pos]
                     after = replacement.original_line[orig_pos + len(orig_full):]
 
-                    # Original: `text <URL>`_ with background on syntax, foreground on text
                     orig_highlighted = f"{RED_BG}`{RESET}{RED}{replacement.preserved_text} {RESET}{RED_BG}<{url}>`__{RESET}" if orig_full.endswith("__") else f"{RED_BG}`{RESET}{RED}{replacement.preserved_text} {RESET}{RED_BG}<{url}>`_{RESET}"
 
-                    # Find the replacement pattern
                     rep_match = re.search(
                         r":([\w:]+):`([^`<>]+)\s*<([^>]+)>`",
                         replacement.replacement_line,
@@ -733,7 +675,6 @@ def rev_search(directory: str):
                         rep_before = replacement.replacement_line[:rep_pos]
                         rep_after = replacement.replacement_line[rep_pos + len(rep_full):]
 
-                        # Replacement: :domain:role:`text <target>` with background on syntax, foreground on text
                         rep_highlighted = f"{GREEN_BG}:{domain_role}:`{RESET}{GREEN}{replacement.preserved_text} {RESET}{GREEN_BG}<{target}>`{RESET}"
 
                         after_with_color = f"{RED}{after}" if after else ""
@@ -741,25 +682,19 @@ def rev_search(directory: str):
 
                         print(f"     {RED}- {before}{orig_highlighted}{after_with_color}{RESET}")
 
-                        # Check if URL differs from inventory URL (yellow line)
                         if replacement.inventory_url and url != replacement.inventory_url:
-                            # Find where https:// starts in the original line to align
                             url_pos_in_line = replacement.original_line.find(url)
-                            # Account for the "     - " prefix (7 chars)
                             spaces = " " * (7 + url_pos_in_line)
                             print(f"{spaces}{YELLOW}{YELLOW_BG}{replacement.inventory_url}{RESET}")
 
                         print(f"     {GREEN}+ {rep_before}{rep_highlighted}{rep_after_with_color}{RESET}")
 
-                        # Print context after
                         if replacement.context_after is not None:
                             print(f"       {replacement.context_after}")
 
                         print()
                         continue
 
-        # Fallback to simple highlighting
-        # Print context before if it exists and hasn't changed
         if replacement.original_context_before is not None and replacement.original_context_before == replacement.context_before:
             print(f"       {replacement.original_context_before}")
 
@@ -825,11 +760,8 @@ def rev_search(directory: str):
                 f"     {RED}- {before}{RED_BG}{original_text}{RESET}{after_with_color}{RESET}"
             )
 
-            # Check if URL differs from inventory URL (yellow line)
             if replacement.inventory_url and url != replacement.inventory_url:
-                # Find where https:// starts in the original line to align
                 url_pos_in_line = replacement.original_line.find(url)
-                # Account for the "     - " prefix (7 chars)
                 spaces = " " * (7 + url_pos_in_line)
                 print(f"{spaces}{YELLOW}{YELLOW_BG}{replacement.inventory_url}{RESET}")
 
@@ -837,7 +769,6 @@ def rev_search(directory: str):
                 f"     {GREEN}+ {rep_before}{GREEN_BG}{rep_text}{RESET}{rep_after_with_color}{RESET}"
             )
 
-        # Print context after
         if replacement.context_after is not None:
             print(f"       {replacement.context_after}")
 
@@ -983,7 +914,6 @@ def lookup_packages(packages_str: str, search_term: Optional[str] = None):
         for key, v in inv.items():
             inv_entries = sorted(v.items())
             for entry, (_proj, _ver, url_path, display_name) in inv_entries:
-                # display_name = display_name * (display_name != '-')
                 flattened.append((key, entry, _proj, _ver, display_name, url_path))
 
     filtered = []
