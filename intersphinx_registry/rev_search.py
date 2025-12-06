@@ -267,24 +267,63 @@ def _compute_replacement(
         start_idx = full_link_match.start()
         end_idx = full_link_match.end()
 
-        # Build target_tokens_old and target_tokens_new in parallel with same structure
-        # Replacement is: :{domain}:`{link_text} <{target}>`
-        # Split into 3 tokens: Added(domain part), Unchanged(link_text), Added(target part)
-        domain_prefix = f":{lookup_result.domain}:`"
-        target_suffix = f" <{target}>`"
-        
-        target_tokens_old: list[Token] = []
-        target_tokens_new: list[Token] = []
-        if start_idx > 0:
-            target_tokens_old.append(Unchanged(original_line[:start_idx]))
-            target_tokens_new.append(Unchanged(original_line[:start_idx]))
-        target_tokens_old.append(Removed(original_text))
-        target_tokens_new.append(Added(domain_prefix))
-        target_tokens_new.append(Unchanged(link_text))
-        target_tokens_new.append(Added(target_suffix))
-        if end_idx < len(original_line):
-            target_tokens_old.append(Unchanged(original_line[end_idx:]))
-            target_tokens_new.append(Unchanged(original_line[end_idx:]))
+        # Extract the URL part from the original link
+        # Format: `link_text <URL>`__ or `link_text <URL>`_
+        # We want: Unchanged(`link_text <), Removed(URL>), Removed(`__)
+        url_match_in_link = re.search(r"<" + re.escape(lookup_result.url) + r"[.,;:!?)]*>", original_text)
+        if url_match_in_link:
+            url_start_in_link = url_match_in_link.start()  # Position of `<`
+            url_end_in_link = url_match_in_link.end()  # Position after `>`
+            
+            # Find where the URL itself starts (after the `<`)
+            url_only_start = url_start_in_link + 1  # After `<`
+            # Find where the URL ends (before the `>`)
+            url_only_end = url_end_in_link - 1  # Before `>`
+            
+            # Build target_tokens_old and target_tokens_new in parallel
+            domain_prefix = f":{lookup_result.domain}:`"
+            target_suffix = f" <{target}>`"
+            
+            target_tokens_old: list[Token] = []
+            target_tokens_new: list[Token] = []
+            if start_idx > 0:
+                target_tokens_old.append(Unchanged(original_line[:start_idx]))
+                target_tokens_new.append(Unchanged(original_line[:start_idx]))
+            
+            # Before URL in the link: `link_text < (opening backtick, link text, opening <)
+            before_url_in_link = original_text[:url_only_start]
+            target_tokens_old.append(Unchanged(before_url_in_link))
+            target_tokens_new.append(Added(domain_prefix))
+            target_tokens_new.append(Unchanged(link_text))
+            
+            # URL part: URL> (just the URL and closing >, not the opening <)
+            url_part = original_text[url_only_start:url_end_in_link]
+            target_tokens_old.append(Removed(url_part))
+            
+            # After URL in the link: `__ or `_ (closing backtick and underscores)
+            after_url_in_link = original_text[url_end_in_link:]
+            target_tokens_old.append(Removed(after_url_in_link))
+            target_tokens_new.append(Added(target_suffix))
+            
+            if end_idx < len(original_line):
+                target_tokens_old.append(Unchanged(original_line[end_idx:]))
+                target_tokens_new.append(Unchanged(original_line[end_idx:]))
+        else:
+            # Fallback: if we can't find the URL in the link, treat the whole thing as removed
+            target_tokens_old: list[Token] = []
+            target_tokens_new: list[Token] = []
+            if start_idx > 0:
+                target_tokens_old.append(Unchanged(original_line[:start_idx]))
+                target_tokens_new.append(Unchanged(original_line[:start_idx]))
+            target_tokens_old.append(Removed(original_text))
+            domain_prefix = f":{lookup_result.domain}:`"
+            target_suffix = f" <{target}>`"
+            target_tokens_new.append(Added(domain_prefix))
+            target_tokens_new.append(Unchanged(link_text))
+            target_tokens_new.append(Added(target_suffix))
+            if end_idx < len(original_line):
+                target_tokens_old.append(Unchanged(original_line[end_idx:]))
+                target_tokens_new.append(Unchanged(original_line[end_idx:]))
 
         # Tokenize context_before and context_after (unchanged in this case)
         ctx_before_tokens_old = (Unchanged(context_before_str),)
