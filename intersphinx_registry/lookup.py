@@ -114,7 +114,10 @@ def lookup_packages(packages_str: str, search_term: Optional[str] = None) -> Non
             print(f"Warning: Failed to fetch {final_url}: {e}", file=sys.stderr)
             continue
         except Exception as e:
-            print(f"Warning: Failed to load inventory from {final_url}: {e}", file=sys.stderr)
+            print(
+                f"Warning: Failed to load inventory from {final_url}: {e}",
+                file=sys.stderr,
+            )
             continue
 
         for key, v in inv.items():

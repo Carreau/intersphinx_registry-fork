@@ -68,8 +68,8 @@ def main():
         help="Find which packages documentation URLs belong to",
         description="Given URLs, find which packages they come from",
         epilog="Examples:\n"
-               "  intersphinx-registry reverse-lookup https://numpy.org/doc/stable/reference/arrays.html\n"
-               "  intersphinx-registry reverse-lookup https://docs.python.org/3/ https://numpy.org/doc/stable/",
+        "  intersphinx-registry reverse-lookup https://numpy.org/doc/stable/reference/arrays.html\n"
+        "  intersphinx-registry reverse-lookup https://docs.python.org/3/ https://numpy.org/doc/stable/",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     reverse_lookup_parser.add_argument(
@@ -77,11 +77,13 @@ def main():
         nargs="*",
         help="URLs to look up (space-separated)",
     )
+
     def _reverse_lookup_wrapper(args):
         if not args.urls:
             reverse_lookup_parser.print_help()
             sys.exit(0)
         reverse_lookup(args.urls)
+
     reverse_lookup_parser.set_defaults(func=_reverse_lookup_wrapper)
 
     rev_parser = subparsers.add_parser(
@@ -89,8 +91,8 @@ def main():
         help="Alias for reverse-lookup",
         description="Given URLs, find which packages they come from",
         epilog="Examples:\n"
-               "  intersphinx-registry rev https://numpy.org/doc/stable/reference/arrays.html\n"
-               "  intersphinx-registry rev https://docs.python.org/3/ https://numpy.org/doc/stable/",
+        "  intersphinx-registry rev https://numpy.org/doc/stable/reference/arrays.html\n"
+        "  intersphinx-registry rev https://docs.python.org/3/ https://numpy.org/doc/stable/",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     rev_parser.add_argument(
@@ -98,11 +100,13 @@ def main():
         nargs="*",
         help="URLs to look up (space-separated)",
     )
+
     def _rev_wrapper(args):
         if not args.urls:
             rev_parser.print_help()
             sys.exit(0)
         reverse_lookup(args.urls)
+
     rev_parser.set_defaults(func=_rev_wrapper)
 
     rev_search_parser = subparsers.add_parser(
@@ -110,8 +114,8 @@ def main():
         help="Search .rst files for URLs that can be replaced with Sphinx references",
         description="Scan directory for .rst files and find URLs that can be replaced",
         epilog="Examples:\n"
-               "  intersphinx-registry rev-search docs/\n"
-               "  intersphinx-registry rev-search .",
+        "  intersphinx-registry rev-search docs/\n"
+        "  intersphinx-registry rev-search .",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     rev_search_parser.add_argument(

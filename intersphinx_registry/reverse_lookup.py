@@ -61,9 +61,13 @@ def uri_match(user_url: str, inv_url: str) -> bool:
     if inv_url in variants:
         return True
 
-    inv_url_normalized = _normalize_url_for_matching(inv_url).rstrip("/").replace("/index.html", "")
+    inv_url_normalized = (
+        _normalize_url_for_matching(inv_url).rstrip("/").replace("/index.html", "")
+    )
     for variant in variants:
-        variant_normalized = _normalize_url_for_matching(variant).rstrip("/").replace("/index.html", "")
+        variant_normalized = (
+            _normalize_url_for_matching(variant).rstrip("/").replace("/index.html", "")
+        )
         if variant_normalized == inv_url_normalized:
             return True
 
