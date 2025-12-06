@@ -2,7 +2,8 @@ import re
 from collections import namedtuple
 from pathlib import Path
 
-from .lookup import ReverseLookupResult, _are_dependencies_available, _do_reverse_lookup
+from .lookup import _are_dependencies_available
+from .reverse_lookup import ReverseLookupResult, _do_reverse_lookup
 
 UrlReplacement = namedtuple(
     "UrlReplacement",

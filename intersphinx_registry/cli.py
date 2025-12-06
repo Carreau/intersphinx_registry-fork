@@ -7,8 +7,8 @@ from intersphinx_registry.lookup import (
     clear_cache,
     lookup_packages,
     print_info,
-    reverse_lookup,
 )
+from intersphinx_registry.reverse_lookup import reverse_lookup
 from intersphinx_registry.rev_search import rev_search
 
 
