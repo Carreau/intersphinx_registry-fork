@@ -642,37 +642,42 @@ def _find_url_replacements(directory: str):
                     )
 
 
-def _print_tokens(
+def format_tokens(
     tokens: Tuple[Token, ...],
     prefix: str = "",
     defaultFG: str = "",
     AddedHighlight: str = "",
     RemovedHighlight: str = "",
-) -> None:
+) -> str:
     """
-    Print tokens with appropriate colors.
+    Format tokens with appropriate colors.
 
     Parameters
     ----------
     tokens : Tuple[Token, ...]
-        Sequence of tokens to print
+        Sequence of tokens to format
     prefix : str
-        Prefix to print before the tokens (e.g., "     - " or "       ")
+        Prefix to add before the tokens (e.g., "     - " or "       ")
     defaultFG : str
         Default foreground color for the line (e.g., RED, GREEN, BLUE). Empty string for no color.
     AddedHighlight : str
         Highlight style for Added tokens (e.g., GREEN_BG for background). Empty string for no highlight.
     RemovedHighlight : str
         Highlight style for Removed tokens (e.g., RED_BG for background). Empty string for no highlight.
+
+    Returns
+    -------
+    str
+        Formatted string with ANSI color codes
     """
     if not tokens:
-        return
+        return ""
 
     output = ""
-    # Print prefix with defaultFG color
+    # Add prefix with defaultFG color
     output += defaultFG + prefix + RESET + defaultFG
 
-    # Print tokens with appropriate highlighting
+    # Format tokens with appropriate highlighting
     for token in tokens:
         if isinstance(token, Added):
             output += f"{AddedHighlight}{str(token)}{RESET}{defaultFG}"
@@ -683,7 +688,7 @@ def _print_tokens(
 
     output += RESET
 
-    print(output)
+    return output
 
 
 def rev_search(directory: str) -> None:
@@ -711,12 +716,12 @@ def rev_search(directory: str) -> None:
             ctx_before_tokens_old, target_tokens_old, ctx_after_tokens_old = replacement.context_old
 
             if ctx_before_tokens_old:
-                _print_tokens(ctx_before_tokens_old, "       ")
+                print(format_tokens(ctx_before_tokens_old, "       "))
 
-            _print_tokens(target_tokens_old, "     ? ", defaultFG=BLUE)
+            print(format_tokens(target_tokens_old, "     ? ", defaultFG=BLUE))
 
             if ctx_after_tokens_old:
-                _print_tokens(ctx_after_tokens_old, "       ")
+                print(format_tokens(ctx_after_tokens_old, "       "))
 
             print()
             continue
@@ -731,13 +736,13 @@ def rev_search(directory: str) -> None:
             # Check if context_before changed
             if ctx_before_tokens_old != ctx_before_tokens_new:
                 # Print old context_before (removed)
-                _print_tokens(ctx_before_tokens_old, "     - ", defaultFG=RED, RemovedHighlight=RED_BG)
+                print(format_tokens(ctx_before_tokens_old, "     - ", defaultFG=RED, RemovedHighlight=RED_BG))
             else:
                 # Print unchanged context_before
-                _print_tokens(ctx_before_tokens_old, "       ")
+                print(format_tokens(ctx_before_tokens_old, "       "))
 
         # Print target line: old (removed)
-        _print_tokens(target_tokens_old, "     - ", defaultFG=RED, RemovedHighlight=RED_BG)
+        print(format_tokens(target_tokens_old, "     - ", defaultFG=RED, RemovedHighlight=RED_BG))
 
         # Print inventory URL if different from the URL in the line (between old and new sections)
         if replacement.inventory_url:
@@ -788,22 +793,22 @@ def rev_search(directory: str) -> None:
         if ctx_before_tokens_old or ctx_before_tokens_new:
             if ctx_before_tokens_old != ctx_before_tokens_new:
                 # Print new context_before (added) with BG GREEN for Added tokens
-                _print_tokens(ctx_before_tokens_new, "     + ", defaultFG=GREEN, AddedHighlight=GREEN_BG, RemovedHighlight=RED_BG)
+                print(format_tokens(ctx_before_tokens_new, "     + ", defaultFG=GREEN, AddedHighlight=GREEN_BG, RemovedHighlight=RED_BG))
 
         # Print target line: new (added) with BG GREEN for Added tokens
-        _print_tokens(target_tokens_new, "     + ", defaultFG=GREEN, AddedHighlight=GREEN_BG, RemovedHighlight=RED_BG)
+        print(format_tokens(target_tokens_new, "     + ", defaultFG=GREEN, AddedHighlight=GREEN_BG, RemovedHighlight=RED_BG))
 
         # Print context_after at the end (old and new together)
         if ctx_after_tokens_old or ctx_after_tokens_new:
             # Check if context_after changed
             if ctx_after_tokens_old != ctx_after_tokens_new:
                 # Print old context_after (removed)
-                _print_tokens(ctx_after_tokens_old, "     - ", defaultFG=RED, RemovedHighlight=RED_BG)
+                print(format_tokens(ctx_after_tokens_old, "     - ", defaultFG=RED, RemovedHighlight=RED_BG))
                 # Print new context_after (added) with BG GREEN for Added tokens
-                _print_tokens(ctx_after_tokens_new, "     + ", defaultFG=GREEN, AddedHighlight=GREEN_BG, RemovedHighlight=RED_BG)
+                print(format_tokens(ctx_after_tokens_new, "     + ", defaultFG=GREEN, AddedHighlight=GREEN_BG, RemovedHighlight=RED_BG))
             else:
                 # Print unchanged context_after
-                _print_tokens(ctx_after_tokens_old, "       ")
+                print(format_tokens(ctx_after_tokens_old, "       "))
 
         print()
 
