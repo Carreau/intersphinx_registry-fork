@@ -20,13 +20,13 @@ from . import __version__, get_intersphinx_mapping
 # Named tuple for reverse lookup results
 ReverseLookupResult = namedtuple(
     "ReverseLookupResult",
-    ["url", "package", "domain", "rst_entry", "display_name"],
+    ["url", "package", "domain", "rst_entry", "display_name", "inventory_url"],
 )
 
 UrlReplacement = namedtuple(
     "UrlReplacement",
     ["filepath", "line_num", "original_line", "replacement_line",
-     "original_context_before", "context_before", "context_after", "preserved_text"],
+     "original_context_before", "context_before", "context_after", "preserved_text", "inventory_url"],
 )
 
 ReplacementContext = namedtuple(
@@ -243,7 +243,7 @@ def _do_reverse_lookup(
             )
             for url_str in url_list:
                 results.append(
-                    ReverseLookupResult(url_str, package, None, None, None)
+                    ReverseLookupResult(url_str, package, None, None, None, None)
                 )
             continue
 
@@ -260,7 +260,7 @@ def _do_reverse_lookup(
                 if uri_match(url_str, inv_uri):
                     results.append(
                         ReverseLookupResult(
-                            url_str, package, key, entry, display_name
+                            url_str, package, key, entry, display_name, inv_uri
                         )
                     )
                     found = True
@@ -268,7 +268,7 @@ def _do_reverse_lookup(
 
             if not found:
                 results.append(
-                    ReverseLookupResult(url_str, package, None, None, None)
+                    ReverseLookupResult(url_str, package, None, None, None, None)
                 )
 
     return results
@@ -521,6 +521,7 @@ def _find_url_replacements(directory: str):
                         replacement_info.context.context_before,  # Modified context_before
                         replacement_info.context.context_after,
                         replacement_info.preserved_text,
+                        lookup_result.inventory_url,
                     )
                 else:
                     # Found package but no entry - yield with None replacement
@@ -533,6 +534,7 @@ def _find_url_replacements(directory: str):
                         context_before,  # Unchanged
                         context_after,
                         None,  # No preserved text
+                        lookup_result.inventory_url,
                     )
 
 
@@ -552,9 +554,11 @@ def rev_search(directory: str):
     GREEN = "\033[32m"
     CYAN = "\033[36m"
     BLUE = "\033[34m"
+    YELLOW = "\033[33m"
     RED_BG = "\033[41;37m"
     GREEN_BG = "\033[42;30m"
     BLUE_BG = "\033[44;37m"
+    YELLOW_BG = "\033[43;30m"
     RESET = "\033[0m"
 
     found_any = False
@@ -672,6 +676,15 @@ def rev_search(directory: str):
                         # Print old lines together
                         print(f"     {RED}- {orig_ctx_highlighted}{RESET}")
                         print(f"     {RED}- {orig_line_highlighted}{RESET}")
+
+                        # Check if URL differs from inventory URL (yellow line)
+                        if replacement.inventory_url and url != replacement.inventory_url:
+                            # Find where https:// starts in the original line to align
+                            url_pos_in_line = replacement.original_line.find(url)
+                            # Account for the "     - " prefix (7 chars)
+                            spaces = " " * (7 + url_pos_in_line)
+                            print(f"{spaces}{YELLOW}{YELLOW_BG}{replacement.inventory_url}{RESET}")
+
                         # Print new lines together
                         print(f"     {GREEN}+ {rep_ctx_highlighted}{RESET}")
                         print(f"     {GREEN}+ {rep_line_highlighted}{RESET}")
@@ -727,6 +740,15 @@ def rev_search(directory: str):
                         rep_after_with_color = f"{GREEN}{rep_after}" if rep_after else ""
 
                         print(f"     {RED}- {before}{orig_highlighted}{after_with_color}{RESET}")
+
+                        # Check if URL differs from inventory URL (yellow line)
+                        if replacement.inventory_url and url != replacement.inventory_url:
+                            # Find where https:// starts in the original line to align
+                            url_pos_in_line = replacement.original_line.find(url)
+                            # Account for the "     - " prefix (7 chars)
+                            spaces = " " * (7 + url_pos_in_line)
+                            print(f"{spaces}{YELLOW}{YELLOW_BG}{replacement.inventory_url}{RESET}")
+
                         print(f"     {GREEN}+ {rep_before}{rep_highlighted}{rep_after_with_color}{RESET}")
 
                         # Print context after
@@ -802,6 +824,15 @@ def rev_search(directory: str):
             print(
                 f"     {RED}- {before}{RED_BG}{original_text}{RESET}{after_with_color}{RESET}"
             )
+
+            # Check if URL differs from inventory URL (yellow line)
+            if replacement.inventory_url and url != replacement.inventory_url:
+                # Find where https:// starts in the original line to align
+                url_pos_in_line = replacement.original_line.find(url)
+                # Account for the "     - " prefix (7 chars)
+                spaces = " " * (7 + url_pos_in_line)
+                print(f"{spaces}{YELLOW}{YELLOW_BG}{replacement.inventory_url}{RESET}")
+
             print(
                 f"     {GREEN}+ {rep_before}{GREEN_BG}{rep_text}{RESET}{rep_after_with_color}{RESET}"
             )
