@@ -45,6 +45,8 @@ class UrlReplacement(NamedTuple):
         Path to the RST file containing the URL
     line_num : int
         Line number where the URL was found
+    matched_url : str
+        The URL that was matched in the text and replaced
     context_old : OutputReplacementContext
         The old context (before replacement) with tokenized (context_before_tokens, target_line_tokens, context_after_tokens)
     context_new : OutputReplacementContext
@@ -55,6 +57,7 @@ class UrlReplacement(NamedTuple):
 
     filepath: str
     line_num: int
+    matched_url: str
     context_old: OutputReplacementContext
     context_new: OutputReplacementContext
     inventory_url: Optional[str]
@@ -540,7 +543,7 @@ def _find_url_replacements(directory: str):
     ------
     UrlReplacement
         UrlReplacement namedtuples containing:
-        filepath, line_num, context_old, context_new, inventory_url
+        filepath, line_num, matched_url, context_old, context_new, inventory_url
     """
     url_pattern = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
 
@@ -606,6 +609,7 @@ def _find_url_replacements(directory: str):
                     yield UrlReplacement(
                         filepath,
                         line_num,
+                        lookup_result.url,
                         replacement_info.context_old,
                         replacement_info.context_new,
                         lookup_result.inventory_url,
@@ -620,6 +624,7 @@ def _find_url_replacements(directory: str):
                     yield UrlReplacement(
                         filepath,
                         line_num,
+                        lookup_result.url,
                         empty_context,
                         empty_context,
                         lookup_result.inventory_url,
@@ -803,10 +808,39 @@ def rev_search(directory: str) -> None:
                 https_pos = old_text.find("https://")
                 if https_pos >= 0:
                     spaces = " " * (7 + https_pos)
-                    print(f"{spaces}{YELLOW}{YELLOW_BG}{replacement.inventory_url}{RESET}")
                 else:
-                    # Fallback: print at start of line if no https:// found
-                    print(f"       {YELLOW}{YELLOW_BG}{replacement.inventory_url}{RESET}")
+                    spaces = "       "
+                
+                # Highlight differences between matched_url and inventory_url
+                matched_url = replacement.matched_url
+                inventory_url = replacement.inventory_url
+                
+                # Find common prefix and suffix
+                prefix_len = 0
+                while (prefix_len < len(matched_url) and 
+                       prefix_len < len(inventory_url) and
+                       matched_url[prefix_len] == inventory_url[prefix_len]):
+                    prefix_len += 1
+                
+                suffix_len = 0
+                while (suffix_len < len(matched_url) - prefix_len and
+                       suffix_len < len(inventory_url) - prefix_len and
+                       matched_url[-(suffix_len + 1)] == inventory_url[-(suffix_len + 1)]):
+                    suffix_len += 1
+                
+                # Build highlighted URL
+                if prefix_len > 0 or suffix_len > 0:
+                    # Has common parts
+                    prefix = inventory_url[:prefix_len]
+                    middle = inventory_url[prefix_len:len(inventory_url) - suffix_len] if suffix_len > 0 else inventory_url[prefix_len:]
+                    suffix = inventory_url[-suffix_len:] if suffix_len > 0 else ""
+                    
+                    highlighted_url = f"{YELLOW}{prefix}{YELLOW_BG}{middle}{RESET}{YELLOW}{suffix}{RESET}"
+                else:
+                    # No common parts, highlight everything
+                    highlighted_url = f"{YELLOW_BG}{inventory_url}{RESET}"
+                
+                print(f"{spaces}{highlighted_url}")
 
         # Print all new lines together (before and target)
         # Print context_before (new) if it changed
