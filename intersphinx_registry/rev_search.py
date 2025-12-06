@@ -353,8 +353,8 @@ def _compute_replacement(
                 target_tokens_new.append(Unchanged(original_line[end_idx:]))
         else:
             # Fallback: if we can't find the URL in the link, treat the whole thing as removed
-            target_tokens_old: list[Token] = []
-            target_tokens_new: list[Token] = []
+            target_tokens_old = []
+            target_tokens_new = []
             if start_idx > 0:
                 target_tokens_old.append(Unchanged(original_line[:start_idx]))
                 target_tokens_new.append(Unchanged(original_line[:start_idx]))
