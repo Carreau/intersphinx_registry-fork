@@ -28,6 +28,11 @@ UrlReplacement = namedtuple(
     ["filepath", "line_num", "original_line", "replacement_line", "context_before", "context_after"],
 )
 
+ReplacementContext = namedtuple(
+    "ReplacementContext",
+    ["context_before", "target_line", "context_after"],
+)
+
 
 def _compress_user_path(path: str) -> str:
     """
@@ -305,68 +310,83 @@ def reverse_lookup(urls: list[str]):
 
 
 def _compute_replacement(
-    original_line: str, url: str, rst_ref: str, rst_entry: str, context_before: str | None = None
-) -> str:
+    original: ReplacementContext,
+    lookup_result: ReverseLookupResult,
+) -> ReplacementContext:
     """
-    Compute the replacement line for a URL in an RST file.
+    Compute the replacement line(s) for a URL in an RST file.
 
     Parameters
     ----------
-    original_line : str
-        The original line containing the URL
-    url : str
-        The URL to replace
-    rst_ref : str
-        The RST reference to replace with (e.g., :py:module:`python:os`)
-    rst_entry : str
-        The entry name from intersphinx
-    context_before : str | None
-        The line before the current line (for detecting multi-line RST links)
+    original : ReplacementContext
+        The original lines (context_before, target_line, context_after)
+    lookup_result : ReverseLookupResult
+        The reverse lookup result containing url, package, domain, rst_entry, etc.
 
     Returns
     -------
-    str
-        The replacement line
+    ReplacementContext
+        A named tuple with (context_before, target_line, context_after).
+        For multi-line links, context_before will be modified.
+        For single-line replacements, context_before/after are passed through unchanged.
     """
+    # Build the reference target: package:entry
+    target = f"{lookup_result.package}:{lookup_result.rst_entry}"
+    # Build the full rst reference: :domain:role:`target`
+    rst_ref = f":{lookup_result.domain}:`{target}`"
+
     # Check for full RST link with custom text: `text <URL>`_
-    # Convert to :domain:`text <ref>` format
+    # Convert to :domain:role:`text <target>` format
     full_link_match = re.search(
-        r"`([^`<>]+)\s*<" + re.escape(url) + r">`_", original_line
+        r"`([^`<>]+)\s*<" + re.escape(lookup_result.url) + r">`_", original.target_line
     )
     if full_link_match:
-        # Preserve the custom link text, extract domain from rst_ref
+        # Preserve the custom link text
         link_text = full_link_match.group(1).strip()
         original_text = full_link_match.group(0)
-        # Extract package:path from rst_ref (e.g., :std:doc:`python:library/os` -> python:library/os)
-        ref_content = rst_ref.split("`")[1].rstrip("`")
-        replacement = f"{rst_ref.split('`')[0]}`{link_text} <{ref_content}>`"
-        return original_line.replace(original_text, replacement)
+        replacement = f":{lookup_result.domain}:`{link_text} <{target}>`"
+        return ReplacementContext(
+            original.context_before,
+            original.target_line.replace(original_text, replacement),
+            original.context_after,
+        )
 
     # Check for simple RST link: <URL>`_ or `<URL>`_
     # This could be a single-line or multi-line link
-    simple_link_match = re.search(r"`?<" + re.escape(url) + r">`_", original_line)
+    simple_link_match = re.search(r"`?<" + re.escape(lookup_result.url) + r">`_", original.target_line)
     if simple_link_match:
         original_text = simple_link_match.group(0)
 
         # Check if this is part of a multi-line link by looking at the previous line
         # Multi-line pattern: previous line contains `text at the end (not ending with `_)
-        if context_before:
+        if original.context_before:
             # Look for a backtick followed by text at the end of the line
-            link_text_match = re.search(r"`([^`]+)$", context_before)
+            link_text_match = re.search(r"`([^`]+)$", original.context_before)
             if link_text_match:
-                # Multi-line link - extract the link text from the previous line
-                link_text = link_text_match.group(1).strip()
-                # Extract package:path from rst_ref
-                ref_content = rst_ref.split("`")[1].rstrip("`")
-                replacement = f"{rst_ref.split('`')[0]}`{link_text} <{ref_content}>`"
-                # For multi-line, we only replace the <URL>`_ part
-                return original_line.replace(original_text, replacement)
+                # Multi-line link - need to modify both lines
+                # Modify context_before: replace `link_text with :domain:role:`link_text
+                new_context_before = re.sub(
+                    r"`([^`]+)$", f":{lookup_result.domain}:`\\1", original.context_before
+                )
+
+                # Modify current line: replace <URL>`_ with <target>`
+                new_line = original.target_line.replace(original_text, f"<{target}>`")
+
+                return ReplacementContext(new_context_before, new_line, original.context_after)
 
         # Single-line simple link - just replace with rst_ref
-        return original_line.replace(original_text, rst_ref)
+        return ReplacementContext(
+            original.context_before,
+            original.target_line.replace(original_text, rst_ref),
+            original.context_after,
+        )
 
     # Plain URL - replace with just the rst_ref
-    return original_line.replace(url, rst_ref)
+    return ReplacementContext(
+        original.context_before,
+        original.target_line.replace(lookup_result.url, rst_ref),
+        original.context_after,
+    )
 
 
 def _find_url_replacements(directory: str):
@@ -415,15 +435,9 @@ def _find_url_replacements(directory: str):
         urls = list(url_locations.keys())
         results = _do_reverse_lookup(urls)
 
+        # Keep ReverseLookupResult objects, pair them with their line locations
         replaceable = [
-            (
-                result.url,
-                result.package,
-                result.domain,
-                result.rst_entry,
-                result.display_name,
-                url_locations[result.url],
-            )
+            (result, url_locations[result.url])
             for result in results
             if result.rst_entry is not None
         ]
@@ -433,27 +447,25 @@ def _find_url_replacements(directory: str):
 
         filepath = str(rst_file)
 
-        for (
-            url,
-            package,
-            domain_role,
-            rst_entry,
-            display_name,
-            line_infos,
-        ) in replaceable:
-            rst_ref = f":{domain_role}:`{package}:{rst_entry}`"
-
+        for lookup_result, line_infos in replaceable:
             for line_num, original_line in line_infos:
                 # Get context lines (1 before and 1 after)
                 context_before = all_lines[line_num - 2].rstrip() if line_num > 1 else None
                 context_after = all_lines[line_num].rstrip() if line_num < len(all_lines) else None
 
-                replacement_line = _compute_replacement(
-                    original_line, url, rst_ref, rst_entry, context_before
-                )
+                # Create the original lines tuple
+                original = ReplacementContext(context_before, original_line, context_after)
+
+                # Compute replacement
+                replacement = _compute_replacement(original, lookup_result)
 
                 yield UrlReplacement(
-                    filepath, line_num, original_line, replacement_line, context_before, context_after
+                    filepath,
+                    line_num,
+                    original_line,
+                    replacement.target_line,
+                    replacement.context_before,
+                    replacement.context_after,
                 )
 
 
