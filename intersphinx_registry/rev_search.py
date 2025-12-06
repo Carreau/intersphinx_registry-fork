@@ -800,7 +800,8 @@ def rev_search(directory: str) -> None:
         ctx_before_tokens_old, target_tokens_old, ctx_after_tokens_old = replacement.context_old
         ctx_before_tokens_new, target_tokens_new, ctx_after_tokens_new = replacement.context_new
 
-        # Print context_before if it exists
+        # Print all old lines together (before and target)
+        # Print context_before (old) if it exists
         if ctx_before_tokens_old or ctx_before_tokens_new:
             # Check if context_before changed
             if ctx_before_tokens_old != ctx_before_tokens_new:
@@ -813,7 +814,7 @@ def rev_search(directory: str) -> None:
         # Print target line: old (removed)
         _print_tokens(target_tokens_old, "     - ")
 
-        # Print inventory URL if different from the URL in the line (before the new context)
+        # Print inventory URL if different from the URL in the line (between old and new sections)
         if replacement.inventory_url:
             # Check if inventory_url appears in target_tokens_old
             old_text = "".join(str(token) for token in target_tokens_old if not isinstance(token, Added))
@@ -823,10 +824,17 @@ def rev_search(directory: str) -> None:
                 spaces = " " * (7 + url_pos)
                 print(f"{spaces}{YELLOW}{YELLOW_BG}{replacement.inventory_url}{RESET}")
 
+        # Print all new lines together (before and target)
+        # Print context_before (new) if it changed
+        if ctx_before_tokens_old or ctx_before_tokens_new:
+            if ctx_before_tokens_old != ctx_before_tokens_new:
+                # Print new context_before (added) with BG GREEN for Added tokens
+                _print_tokens(ctx_before_tokens_new, "     + ", use_bg_for_added=True)
+
         # Print target line: new (added) with BG GREEN for Added tokens
         _print_tokens(target_tokens_new, "     + ", use_bg_for_added=True)
 
-        # Print context_after if it exists
+        # Print context_after at the end (old and new together)
         if ctx_after_tokens_old or ctx_after_tokens_new:
             # Check if context_after changed
             if ctx_after_tokens_old != ctx_after_tokens_new:
