@@ -305,7 +305,7 @@ def reverse_lookup(urls: list[str]):
 
 
 def _compute_replacement(
-    original_line: str, url: str, rst_ref: str, rst_entry: str
+    original_line: str, url: str, rst_ref: str, rst_entry: str, context_before: str | None = None
 ) -> str:
     """
     Compute the replacement line for a URL in an RST file.
@@ -320,6 +320,8 @@ def _compute_replacement(
         The RST reference to replace with (e.g., :py:module:`python:os`)
     rst_entry : str
         The entry name from intersphinx
+    context_before : str | None
+        The line before the current line (for detecting multi-line RST links)
 
     Returns
     -------
@@ -327,27 +329,44 @@ def _compute_replacement(
         The replacement line
     """
     # Check for full RST link with custom text: `text <URL>`_
+    # Convert to :domain:`text <ref>` format
     full_link_match = re.search(
         r"`([^`<>]+)\s*<" + re.escape(url) + r">`_", original_line
     )
     if full_link_match:
-        # Preserve the custom link text
+        # Preserve the custom link text, extract domain from rst_ref
         link_text = full_link_match.group(1).strip()
         original_text = full_link_match.group(0)
-        replacement = f"`{link_text} <{rst_ref}>`_"
+        # Extract package:path from rst_ref (e.g., :std:doc:`python:library/os` -> python:library/os)
+        ref_content = rst_ref.split("`")[1].rstrip("`")
+        replacement = f"{rst_ref.split('`')[0]}`{link_text} <{ref_content}>`"
         return original_line.replace(original_text, replacement)
 
-    # Check for simple RST link: <URL>`_
-    simple_link_match = re.search(r"<" + re.escape(url) + r">`_", original_line)
+    # Check for simple RST link: <URL>`_ or `<URL>`_
+    # This could be a single-line or multi-line link
+    simple_link_match = re.search(r"`?<" + re.escape(url) + r">`_", original_line)
     if simple_link_match:
-        # Use rst_entry as link text
         original_text = simple_link_match.group(0)
-        replacement = f"`{rst_entry} <{rst_ref}>`_"
-        return original_line.replace(original_text, replacement)
 
-    # Plain URL - wrap it with link using rst_entry as text
-    replacement = f"`{rst_entry} <{rst_ref}>`_"
-    return original_line.replace(url, replacement)
+        # Check if this is part of a multi-line link by looking at the previous line
+        # Multi-line pattern: previous line contains `text at the end (not ending with `_)
+        if context_before:
+            # Look for a backtick followed by text at the end of the line
+            link_text_match = re.search(r"`([^`]+)$", context_before)
+            if link_text_match:
+                # Multi-line link - extract the link text from the previous line
+                link_text = link_text_match.group(1).strip()
+                # Extract package:path from rst_ref
+                ref_content = rst_ref.split("`")[1].rstrip("`")
+                replacement = f"{rst_ref.split('`')[0]}`{link_text} <{ref_content}>`"
+                # For multi-line, we only replace the <URL>`_ part
+                return original_line.replace(original_text, replacement)
+
+        # Single-line simple link - just replace with rst_ref
+        return original_line.replace(original_text, rst_ref)
+
+    # Plain URL - replace with just the rst_ref
+    return original_line.replace(url, rst_ref)
 
 
 def _find_url_replacements(directory: str):
@@ -425,13 +444,13 @@ def _find_url_replacements(directory: str):
             rst_ref = f":{domain_role}:`{package}:{rst_entry}`"
 
             for line_num, original_line in line_infos:
-                replacement_line = _compute_replacement(
-                    original_line, url, rst_ref, rst_entry
-                )
-
                 # Get context lines (1 before and 1 after)
                 context_before = all_lines[line_num - 2].rstrip() if line_num > 1 else None
                 context_after = all_lines[line_num].rstrip() if line_num < len(all_lines) else None
+
+                replacement_line = _compute_replacement(
+                    original_line, url, rst_ref, rst_entry, context_before
+                )
 
                 yield UrlReplacement(
                     filepath, line_num, original_line, replacement_line, context_before, context_after
