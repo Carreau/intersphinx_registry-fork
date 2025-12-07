@@ -86,29 +86,6 @@ def main():
 
     reverse_lookup_parser.set_defaults(func=_reverse_lookup_wrapper)
 
-    rev_parser = subparsers.add_parser(
-        "rev",
-        help="Alias for reverse-lookup",
-        description="Given URLs, find which packages they come from",
-        epilog="Examples:\n"
-        "  intersphinx-registry rev https://numpy.org/doc/stable/reference/arrays.html\n"
-        "  intersphinx-registry rev https://docs.python.org/3/ https://numpy.org/doc/stable/",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    rev_parser.add_argument(
-        "urls",
-        nargs="*",
-        help="URLs to look up (space-separated)",
-    )
-
-    def _rev_wrapper(args):
-        if not args.urls:
-            rev_parser.print_help()
-            sys.exit(0)
-        reverse_lookup(args.urls)
-
-    rev_parser.set_defaults(func=_rev_wrapper)
-
     rev_search_parser = subparsers.add_parser(
         "rev-search",
         help="Search .rst files for URLs that can be replaced with Sphinx references",
