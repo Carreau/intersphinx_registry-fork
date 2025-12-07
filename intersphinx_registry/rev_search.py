@@ -217,8 +217,7 @@ def _compute_full_link_replacement(
             before_url_in_link = original_text[:url_only_start]
             target_tokens_old.append(Unchanged(before_url_in_link))
             target_tokens_new.append(Added(domain_prefix))
-            target_tokens_new.append(Unchanged("`"))
-            target_tokens_new.append(Unchanged(link_text))
+            target_tokens_new.append(Unchanged("`" + link_text))
             if space_before_angle:
                 target_tokens_new.append(Unchanged(space_before_angle + "<"))
             else:
@@ -232,10 +231,10 @@ def _compute_full_link_replacement(
                 closing_backtick = after_url_in_link[0]
                 underscores = after_url_in_link[1:]
                 closing_angle = original_text[url_only_end:url_end_in_link]
-                target_tokens_old.append(Unchanged(closing_angle + closing_backtick))
-                target_tokens_old.append(Removed(underscores))
                 target_tokens_new.append(Added(target))
                 target_tokens_new.append(Unchanged(closing_angle + closing_backtick))
+                target_tokens_old.append(Unchanged(closing_angle + closing_backtick))
+                target_tokens_old.append(Removed(underscores))
             else:
                 closing_angle = original_text[url_only_end:url_end_in_link]
                 target_tokens_old.append(Unchanged(closing_angle))
@@ -256,8 +255,7 @@ def _compute_full_link_replacement(
             domain_prefix = f":{lookup_result.domain}:"
             target_suffix = f" <{target}>`"
             target_tokens_new.append(Added(domain_prefix))
-            target_tokens_new.append(Unchanged("`"))
-            target_tokens_new.append(Unchanged(link_text))
+            target_tokens_new.append(Unchanged("`" + link_text))
             target_tokens_new.append(Added(target_suffix))
             if end_idx < len(original_line):
                 target_tokens_old.append(Unchanged(original_line[end_idx:]))
