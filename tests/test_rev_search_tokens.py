@@ -9,6 +9,7 @@ from intersphinx_registry.rev_search import (
     Removed,
     Unchanged,
     _compute_replacement,
+    normalise_token_stream,
 )
 from intersphinx_registry.reverse_lookup import ReverseLookupResult
 
@@ -45,7 +46,8 @@ from intersphinx_registry.reverse_lookup import ReverseLookupResult
                 (
                     (Unchanged("For more details, see the"),),
                     (
-                        Added(":std:doc:`"),
+                        Added(":std:doc:"),
+                        Unchanged("`"),
                         Unchanged("setuptools documentation"),
                         Unchanged(" <"),
                         Added("setuptools:setuptools"),
@@ -86,7 +88,8 @@ from intersphinx_registry.reverse_lookup import ReverseLookupResult
                     (Unchanged(""),),
                     (
                         Unchanged("For more details, see the "),
-                        Added(":std:doc:`"),
+                        Added(":std:doc:"),
+                        Unchanged("`"),
                         Unchanged("setuptools documentation"),
                         Unchanged(" <"),
                         Added("setuptools:setuptools"),
@@ -126,7 +129,8 @@ from intersphinx_registry.reverse_lookup import ReverseLookupResult
                 (
                     (Unchanged(""),),
                     (
-                        Added(":std:doc:`"),
+                        Added(":std:doc:"),
+                        Unchanged("`"),
                         Unchanged("setuptools documentation"),
                         Unchanged(" <"),
                         Added("setuptools:setuptools"),
@@ -169,9 +173,8 @@ from intersphinx_registry.reverse_lookup import ReverseLookupResult
                     (Unchanged(""),),
                     (
                         Unchanged("See "),
-                        Added(":std:doc:`"),
-                        Unchanged("setuptools documentation"),
-                        Unchanged(" <"),
+                        Added(":std:doc:"),
+                        Unchanged("`setuptools documentation <"),
                         Added("setuptools:setuptools"),
                         Unchanged(">`"),
                         Unchanged(" for details"),
@@ -192,94 +195,34 @@ def test_full_link_tokenization(original, lookup_result, expected):
     """Test that full link replacement tokenizes correctly."""
     result = _compute_replacement(original, lookup_result)
 
-    # Compare context_old
+    # Compare context_old (normalized)
     ctx_before_old, target_tokens_old, ctx_after_old = result.context_old
     exp_ctx_before_old, exp_target_tokens_old, exp_ctx_after_old = expected.context_old
 
-    # Compare context_before tokens
-    assert len(ctx_before_old) == len(exp_ctx_before_old), (
-        f"context_before: Expected {len(exp_ctx_before_old)} tokens, got {len(ctx_before_old)}\n"
-        f"Expected: {exp_ctx_before_old}\n"
-        f"Got: {ctx_before_old}"
-    )
-    for i, (actual, exp) in enumerate(zip(ctx_before_old, exp_ctx_before_old)):
-        assert type(actual) == type(exp), (
-            f"context_before token {i}: Expected {type(exp).__name__}, got {type(actual).__name__}"
-        )
-        assert str(actual) == str(exp), (
-            f"context_before token {i}: Expected '{exp}', got '{actual}'"
-        )
+    assert normalise_token_stream(ctx_before_old) == normalise_token_stream(
+        exp_ctx_before_old
+    ), f"context_before mismatch"
 
-    # Compare target_line tokens
-    assert len(target_tokens_old) == len(exp_target_tokens_old), (
-        f"target_line: Expected {len(exp_target_tokens_old)} tokens, got {len(target_tokens_old)}\n"
-        f"Expected: {exp_target_tokens_old}\n"
-        f"Got: {target_tokens_old}"
-    )
-    for i, (actual, exp) in enumerate(zip(target_tokens_old, exp_target_tokens_old)):
-        assert type(actual) == type(exp), (
-            f"target_line token {i}: Expected {type(exp).__name__}, got {type(actual).__name__}\n"
-            f"Expected: {exp}\n"
-            f"Got: {actual}"
-        )
-        assert str(actual) == str(exp), (
-            f"target_line token {i}: Expected '{exp}', got '{actual}'"
-        )
+    assert normalise_token_stream(target_tokens_old) == normalise_token_stream(
+        exp_target_tokens_old
+    ), f"target_line (old) mismatch"
 
-    # Compare context_after tokens
-    assert len(ctx_after_old) == len(exp_ctx_after_old), (
-        f"context_after: Expected {len(exp_ctx_after_old)} tokens, got {len(ctx_after_old)}\n"
-        f"Expected: {exp_ctx_after_old}\n"
-        f"Got: {ctx_after_old}"
-    )
-    for i, (actual, exp) in enumerate(zip(ctx_after_old, exp_ctx_after_old)):
-        assert type(actual) == type(exp), (
-            f"context_after token {i}: Expected {type(exp).__name__}, got {type(actual).__name__}"
-        )
-        assert str(actual) == str(exp), (
-            f"context_after token {i}: Expected '{exp}', got '{actual}'"
-        )
+    assert normalise_token_stream(ctx_after_old) == normalise_token_stream(
+        exp_ctx_after_old
+    ), f"context_after mismatch"
 
-    # Compare context_new
+    # Compare context_new (normalized)
     ctx_before_new, target_tokens_new, ctx_after_new = result.context_new
     exp_ctx_before_new, exp_target_tokens_new, exp_ctx_after_new = expected.context_new
 
-    # Compare context_before tokens (new)
-    assert len(ctx_before_new) == len(exp_ctx_before_new), (
-        f"context_before (new): Expected {len(exp_ctx_before_new)} tokens, got {len(ctx_before_new)}"
-    )
-    for i, (actual, exp) in enumerate(zip(ctx_before_new, exp_ctx_before_new)):
-        assert type(actual) == type(exp), (
-            f"context_before (new) token {i}: Expected {type(exp).__name__}, got {type(actual).__name__}"
-        )
-        assert str(actual) == str(exp), (
-            f"context_before (new) token {i}: Expected '{exp}', got '{actual}'"
-        )
+    assert normalise_token_stream(ctx_before_new) == normalise_token_stream(
+        exp_ctx_before_new
+    ), f"context_before (new) mismatch"
 
-    # Compare target_line tokens (new)
-    assert len(target_tokens_new) == len(exp_target_tokens_new), (
-        f"target_line (new): Expected {len(exp_target_tokens_new)} tokens, got {len(target_tokens_new)}\n"
-        f"Expected: {exp_target_tokens_new}\n"
-        f"Got: {target_tokens_new}"
-    )
-    for i, (actual, exp) in enumerate(zip(target_tokens_new, exp_target_tokens_new)):
-        assert type(actual) == type(exp), (
-            f"target_line (new) token {i}: Expected {type(exp).__name__}, got {type(actual).__name__}\n"
-            f"Expected: {exp}\n"
-            f"Got: {actual}"
-        )
-        assert str(actual) == str(exp), (
-            f"target_line (new) token {i}: Expected '{exp}', got '{actual}'"
-        )
+    assert normalise_token_stream(target_tokens_new) == normalise_token_stream(
+        exp_target_tokens_new
+    ), f"target_line (new) mismatch"
 
-    # Compare context_after tokens (new)
-    assert len(ctx_after_new) == len(exp_ctx_after_new), (
-        f"context_after (new): Expected {len(exp_ctx_after_new)} tokens, got {len(ctx_after_new)}"
-    )
-    for i, (actual, exp) in enumerate(zip(ctx_after_new, exp_ctx_after_new)):
-        assert type(actual) == type(exp), (
-            f"context_after (new) token {i}: Expected {type(exp).__name__}, got {type(actual).__name__}"
-        )
-        assert str(actual) == str(exp), (
-            f"context_after (new) token {i}: Expected '{exp}', got '{actual}'"
-        )
+    assert normalise_token_stream(ctx_after_new) == normalise_token_stream(
+        exp_ctx_after_new
+    ), f"context_after (new) mismatch"

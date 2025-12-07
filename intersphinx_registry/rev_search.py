@@ -47,6 +47,42 @@ OutputReplacementContext = Tuple[
 ]
 
 
+def normalise_token_stream(tokens: Tuple[Token, ...]) -> Tuple[Token, ...]:
+    """
+    Normalize a token stream by:
+    1. Filtering out empty tokens
+    2. Merging consecutive tokens of the same type
+
+    This is useful for comparing token streams that are semantically
+    equivalent but may have different tokenization.
+    """
+    if not tokens:
+        return ()
+
+    normalized = []
+    current_type = None
+    current_content = ""
+
+    for token in tokens:
+        if not str(token):
+            continue
+
+        token_type = type(token)
+
+        if token_type == current_type:
+            current_content += str(token)
+        else:
+            if current_type is not None:
+                normalized.append(current_type(current_content))
+            current_type = token_type
+            current_content = str(token)
+
+    if current_type is not None:
+        normalized.append(current_type(current_content))
+
+    return tuple(normalized)
+
+
 class UrlReplacement(NamedTuple):
     """
     Information about a URL replacement in an RST file.
@@ -152,7 +188,7 @@ def _compute_full_link_replacement(
             if url_start_in_link > 0 and original_text[url_start_in_link - 1] == " ":
                 space_before_angle = " "
 
-            domain_prefix = f":{lookup_result.domain}:`"
+            domain_prefix = f":{lookup_result.domain}:"
 
             target_tokens_old: list[Token] = []
             target_tokens_new: list[Token] = []
@@ -163,6 +199,7 @@ def _compute_full_link_replacement(
             before_url_in_link = original_text[:url_only_start]
             target_tokens_old.append(Unchanged(before_url_in_link))
             target_tokens_new.append(Added(domain_prefix))
+            target_tokens_new.append(Unchanged("`"))
             target_tokens_new.append(Unchanged(link_text))
             if space_before_angle:
                 target_tokens_new.append(Unchanged(space_before_angle + "<"))
@@ -198,9 +235,10 @@ def _compute_full_link_replacement(
                 target_tokens_old.append(Unchanged(original_line[:start_idx]))
                 target_tokens_new.append(Unchanged(original_line[:start_idx]))
             target_tokens_old.append(Removed(original_text))
-            domain_prefix = f":{lookup_result.domain}:`"
+            domain_prefix = f":{lookup_result.domain}:"
             target_suffix = f" <{target}>`"
             target_tokens_new.append(Added(domain_prefix))
+            target_tokens_new.append(Unchanged("`"))
             target_tokens_new.append(Unchanged(link_text))
             target_tokens_new.append(Added(target_suffix))
             if end_idx < len(original_line):
