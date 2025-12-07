@@ -150,8 +150,8 @@ def _do_reverse_lookup(
 
         inv_urls = {}
         for key, v in inv.items():
-            for entry, item in v.items():
-                inv_urls[item.uri] = (key, entry, item.display_name)
+            for entry, (proj, ver, uri, display_name) in v.items():
+                inv_urls[uri] = (key, entry, display_name)
 
         for url_str in url_list:
             found = False

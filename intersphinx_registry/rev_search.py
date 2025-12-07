@@ -517,14 +517,14 @@ def _compute_replacement(
     )
 
 
-def _find_url_replacements(directory: str):
+def _find_url_replacements(rst_files):
     """
     Find all URLs in RST files that can be replaced with Sphinx references.
 
     Parameters
     ----------
-    directory : str
-        Directory to search for .rst files
+    rst_files : iterable of Path
+        Iterator or list of RST file paths to process
 
     Yields
     ------
@@ -533,12 +533,6 @@ def _find_url_replacements(directory: str):
         filepath, line_num, matched_url, context_old, context_new, inventory_url
     """
     url_pattern = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
-
-    directory_path = Path(directory)
-    if directory_path.is_file():
-        rst_files = [directory_path] if directory_path.suffix == ".rst" else []
-    else:
-        rst_files = list(directory_path.rglob("*.rst"))
 
     for rst_file in rst_files:
         url_locations: dict[str, list[tuple[int, str]]] = {}
@@ -673,13 +667,19 @@ def rev_search(directory: str) -> None:
     Parameters
     ----------
     directory : str
-        Directory to search for .rst files
+        Path to a directory to search for .rst files, or a single .rst file path
     """
     if not _are_dependencies_available():
         return
 
+    directory_path = Path(directory)
+    if directory_path.is_file():
+        rst_files = [directory_path] if directory_path.suffix == ".rst" else []
+    else:
+        rst_files = directory_path.rglob("*.rst")
+
     found_any = False
-    for replacement in _find_url_replacements(directory):
+    for replacement in _find_url_replacements(rst_files):
         if not found_any:
             found_any = True
         display_path = _compress_user_path(replacement.filepath)
