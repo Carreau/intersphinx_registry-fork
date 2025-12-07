@@ -130,7 +130,7 @@ class ReplacementContext(NamedTuple):
     context_after: str
 
 
-class ReplacementInfo(NamedTuple):
+class ReplacementInfo:
     """
     Information about a computed replacement.
 
@@ -144,8 +144,26 @@ class ReplacementInfo(NamedTuple):
         Contains Removed and Added tokens showing the changes.
     """
 
-    context_old: OutputReplacementContext
-    context_new: OutputReplacementContext
+    def __init__(
+        self,
+        context_old: OutputReplacementContext,
+        context_new: OutputReplacementContext,
+    ):
+        """Initialize ReplacementInfo with normalized token streams."""
+        # Normalize all token sequences
+        ctx_before_old, target_old, ctx_after_old = context_old
+        ctx_before_new, target_new, ctx_after_new = context_new
+
+        self.context_old = (
+            normalise_token_stream(ctx_before_old),
+            normalise_token_stream(target_old),
+            normalise_token_stream(ctx_after_old),
+        )
+        self.context_new = (
+            normalise_token_stream(ctx_before_new),
+            normalise_token_stream(target_new),
+            normalise_token_stream(ctx_after_new),
+        )
 
 
 def _compute_full_link_replacement(

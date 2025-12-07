@@ -195,34 +195,7 @@ def test_full_link_tokenization(original, lookup_result, expected):
     """Test that full link replacement tokenizes correctly."""
     result = _compute_replacement(original, lookup_result)
 
-    # Compare context_old (normalized)
-    ctx_before_old, target_tokens_old, ctx_after_old = result.context_old
-    exp_ctx_before_old, exp_target_tokens_old, exp_ctx_after_old = expected.context_old
-
-    assert normalise_token_stream(ctx_before_old) == normalise_token_stream(
-        exp_ctx_before_old
-    ), f"context_before mismatch"
-
-    assert normalise_token_stream(target_tokens_old) == normalise_token_stream(
-        exp_target_tokens_old
-    ), f"target_line (old) mismatch"
-
-    assert normalise_token_stream(ctx_after_old) == normalise_token_stream(
-        exp_ctx_after_old
-    ), f"context_after mismatch"
-
-    # Compare context_new (normalized)
-    ctx_before_new, target_tokens_new, ctx_after_new = result.context_new
-    exp_ctx_before_new, exp_target_tokens_new, exp_ctx_after_new = expected.context_new
-
-    assert normalise_token_stream(ctx_before_new) == normalise_token_stream(
-        exp_ctx_before_new
-    ), f"context_before (new) mismatch"
-
-    assert normalise_token_stream(target_tokens_new) == normalise_token_stream(
-        exp_target_tokens_new
-    ), f"target_line (new) mismatch"
-
-    assert normalise_token_stream(ctx_after_new) == normalise_token_stream(
-        exp_ctx_after_new
-    ), f"context_after (new) mismatch"
+    # Compare normalized context_old and context_new
+    # Normalization happens automatically in ReplacementInfo.__init__
+    assert result.context_old == expected.context_old, f"context_old mismatch"
+    assert result.context_new == expected.context_new, f"context_new mismatch"
