@@ -122,8 +122,17 @@ def lookup_packages(packages_str: str, search_term: Optional[str] = None) -> Non
 
         for key, v in inv.items():
             inv_entries = sorted(v.items())
-            for entry, (_proj, _ver, url_path, display_name) in inv_entries:
-                flattened.append((key, entry, _proj, _ver, display_name, url_path))
+            for entry, item in inv_entries:
+                flattened.append(
+                    (
+                        key,
+                        entry,
+                        item.project_name,
+                        item.project_version,
+                        item.display_name,
+                        item.uri,
+                    )
+                )
 
     filtered = []
     for item in flattened:
