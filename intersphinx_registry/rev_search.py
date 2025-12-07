@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import NamedTuple, Optional, Tuple, Union
+from typing import Iterable, NamedTuple, Optional, Tuple, Union
 
 from .reverse_lookup import ReverseLookupResult, _do_reverse_lookup
 from .utils import _are_dependencies_available, _compress_user_path
@@ -517,7 +517,24 @@ def _compute_replacement(
     )
 
 
-def process_one_file(rst_file: str):
+def process_one_file(rst_file: Path):
+    """
+    Process a single RST file to find URLs that can be replaced with Sphinx references.
+
+    Yields UrlReplacement objects for each URL found that has a corresponding
+    inventory entry. Files are read, URLs are extracted and looked up, and
+    replacements are computed with token-based diffs.
+
+    Parameters
+    ----------
+    rst_file : Path
+        Path to the RST file to process
+
+    Yields
+    ------
+    UrlReplacement
+        Information about each URL replacement found in the file
+    """
     url_pattern = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
     url_locations: dict[str, list[tuple[int, str]]] = {}
     all_lines = []
@@ -654,7 +671,9 @@ def rev_search(directory: str) -> None:
 
     directory_path = Path(directory)
     if directory_path.is_file():
-        rst_files = [directory_path] if directory_path.suffix == ".rst" else []
+        rst_files: Iterable[Path] = (
+            [directory_path] if directory_path.suffix == ".rst" else []
+        )
     else:
         rst_files = directory_path.rglob("*.rst")
 
@@ -662,7 +681,18 @@ def rev_search(directory: str) -> None:
         search_one_file(rst_file)
 
 
-def search_one_file(rst_file):
+def search_one_file(rst_file: Path) -> None:
+    """
+    Search a single RST file and print formatted diffs for replaceable URLs.
+
+    Processes the file to find replaceable URLs and prints a formatted diff
+    showing the original and replacement text with color-coded token highlights.
+
+    Parameters
+    ----------
+    rst_file : Path
+        Path to the RST file to search and display results for
+    """
     for replacement in process_one_file(rst_file):
         display_path = _compress_user_path(replacement.filepath)
         print(f"{CYAN}{display_path}:{replacement.line_num}{RESET}")
