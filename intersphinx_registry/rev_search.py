@@ -517,26 +517,6 @@ def _compute_replacement(
     )
 
 
-def _find_url_replacements(rst_files):
-    """
-    Find all URLs in RST files that can be replaced with Sphinx references.
-
-    Parameters
-    ----------
-    rst_files : iterable of Path
-        Iterator or list of RST file paths to process
-
-    Yields
-    ------
-    UrlReplacement
-        UrlReplacement namedtuples containing:
-        filepath, line_num, matched_url, context_old, context_new, inventory_url
-    """
-
-    for rst_file in rst_files:
-        yield from process_one_file(rst_file)
-
-
 def process_one_file(rst_file: str):
     url_pattern = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
     url_locations: dict[str, list[tuple[int, str]]] = {}
