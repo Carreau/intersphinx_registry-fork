@@ -532,84 +532,84 @@ def _find_url_replacements(rst_files):
         UrlReplacement namedtuples containing:
         filepath, line_num, matched_url, context_old, context_new, inventory_url
     """
-    url_pattern = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
 
     for rst_file in rst_files:
-        url_locations: dict[str, list[tuple[int, str]]] = {}
-        all_lines = []
+        yield from process_one_file(rst_file)
 
-        try:
-            with open(rst_file, "r", encoding="utf-8") as f:
-                all_lines = f.readlines()
-                for line_num, line in enumerate(all_lines, start=1):
-                    urls = url_pattern.findall(line)
-                    for url in urls:
-                        url = url.rstrip(".,;:!?)")
-                        url_locations.setdefault(url, []).append(
-                            (line_num, line.rstrip())
-                        )
-        except Exception:
-            continue
 
-        if not url_locations:
-            continue
+def process_one_file(rst_file: str):
+    url_pattern = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
+    url_locations: dict[str, list[tuple[int, str]]] = {}
+    all_lines = []
 
-        urls = list(url_locations.keys())
-        results = _do_reverse_lookup(urls)
+    try:
+        with open(rst_file, "r", encoding="utf-8") as f:
+            all_lines = f.readlines()
+            for line_num, line in enumerate(all_lines, start=1):
+                urls = url_pattern.findall(line)
+                for url in urls:
+                    url = url.rstrip(".,;:!?)")
+                    url_locations.setdefault(url, []).append((line_num, line.rstrip()))
+    except Exception:
+        return
 
-        replaceable = [
-            (result, url_locations[result.url])
-            for result in results
-            if result.package is not None
-        ]
+    if not url_locations:
+        return
 
-        if not replaceable:
-            continue
+    urls = list(url_locations.keys())
+    results = _do_reverse_lookup(urls)
 
-        filepath = str(rst_file)
+    replaceable = [
+        (result, url_locations[result.url])
+        for result in results
+        if result.package is not None
+    ]
 
-        for lookup_result, line_infos in replaceable:
-            for line_num, original_line in line_infos:
-                context_before = (
-                    all_lines[line_num - 2].rstrip() if line_num > 1 else ""
+    if not replaceable:
+        return
+
+    filepath = str(rst_file)
+
+    for lookup_result, line_infos in replaceable:
+        for line_num, original_line in line_infos:
+            context_before = all_lines[line_num - 2].rstrip() if line_num > 1 else ""
+            context_after = (
+                all_lines[line_num].rstrip() if line_num < len(all_lines) else ""
+            )
+
+            if lookup_result.rst_entry is not None:
+                replacement_info = _compute_replacement(
+                    ReplacementContext(
+                        context_before,
+                        original_line,
+                        context_after,
+                    ),
+                    lookup_result,
                 )
-                context_after = (
-                    all_lines[line_num].rstrip() if line_num < len(all_lines) else ""
+
+                yield UrlReplacement(
+                    filepath,
+                    line_num,
+                    lookup_result.url,
+                    replacement_info.context_old,
+                    replacement_info.context_new,
+                    lookup_result.inventory_url,
                 )
-
-                if lookup_result.rst_entry is not None:
-                    replacement_info = _compute_replacement(
-                        ReplacementContext(
-                            context_before,
-                            original_line,
-                            context_after,
-                        ),
-                        lookup_result,
-                    )
-
-                    yield UrlReplacement(
-                        filepath,
-                        line_num,
-                        lookup_result.url,
-                        replacement_info.context_old,
-                        replacement_info.context_new,
-                        lookup_result.inventory_url,
-                    )
-                else:
-                    # No replacement available - create empty contexts
-                    empty_context: OutputReplacementContext = (
-                        (Unchanged(context_before),),
-                        (Unchanged(original_line),),
-                        (Unchanged(context_after),),
-                    )
-                    yield UrlReplacement(
-                        filepath,
-                        line_num,
-                        lookup_result.url,
-                        empty_context,
-                        empty_context,
-                        lookup_result.inventory_url,
-                    )
+            else:
+                # No replacement available - create empty contexts
+                empty_context: OutputReplacementContext = (
+                    (Unchanged(context_before),),
+                    (Unchanged(original_line),),
+                    (Unchanged(context_after),),
+                )
+                yield UrlReplacement(
+                    filepath,
+                    line_num,
+                    lookup_result.url,
+                    empty_context,
+                    empty_context,
+                    lookup_result.inventory_url,
+                )
 
 
 def format_tokens(
@@ -678,10 +678,12 @@ def rev_search(directory: str) -> None:
     else:
         rst_files = directory_path.rglob("*.rst")
 
-    found_any = False
-    for replacement in _find_url_replacements(rst_files):
-        if not found_any:
-            found_any = True
+    for rst_file in rst_files:
+        search_one_file(rst_file)
+
+
+def search_one_file(rst_file):
+    for replacement in process_one_file(rst_file):
         display_path = _compress_user_path(replacement.filepath)
         print(f"{CYAN}{display_path}:{replacement.line_num}{RESET}")
 
@@ -817,6 +819,3 @@ def rev_search(directory: str) -> None:
                 print(format_tokens(ctx_after_tokens_old, "       "))
 
         print()
-
-    if not found_any:
-        print("No URLs found that can be replaced with Sphinx references")
