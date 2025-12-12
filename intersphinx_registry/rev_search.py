@@ -186,103 +186,104 @@ def _compute_full_link_replacement(
         r"`([^`<>]+)\s*<" + re.escape(lookup_result.url) + r"[.,;:!?)]*>`__?",
         original_line,
     )
-    if full_link_match:
-        link_text = full_link_match.group(1).strip()
-        original_text = full_link_match.group(0)
+    if not full_link_match:
+        return None
 
-        start_idx = full_link_match.start()
-        end_idx = full_link_match.end()
-        url_match_in_link = re.search(
-            r"<" + re.escape(lookup_result.url) + r"[.,;:!?)]*>", original_text
-        )
-        if url_match_in_link:
-            url_start_in_link = url_match_in_link.start()
-            url_end_in_link = url_match_in_link.end()
-            url_only_start = url_start_in_link + 1
-            url_only_end = url_end_in_link - 1
+    link_text = full_link_match.group(1).strip()
+    original_text = full_link_match.group(0)
 
-            space_before_angle = ""
-            if url_start_in_link > 0 and original_text[url_start_in_link - 1] == " ":
-                space_before_angle = " "
+    start_idx = full_link_match.start()
+    end_idx = full_link_match.end()
+    url_match_in_link = re.search(
+        r"<" + re.escape(lookup_result.url) + r"[.,;:!?)]*>", original_text
+    )
+    if url_match_in_link:
+        url_start_in_link = url_match_in_link.start()
+        url_end_in_link = url_match_in_link.end()
+        url_only_start = url_start_in_link + 1
+        url_only_end = url_end_in_link - 1
 
-            domain_prefix = f":{lookup_result.domain}:"
+        space_before_angle = ""
+        if url_start_in_link > 0 and original_text[url_start_in_link - 1] == " ":
+            space_before_angle = " "
 
-            target_tokens_old: list[Token] = []
-            target_tokens_new: list[Token] = []
-            if start_idx > 0:
-                target_tokens_old.append(Unchanged(original_line[:start_idx]))
-                target_tokens_new.append(Unchanged(original_line[:start_idx]))
+        domain_prefix = f":{lookup_result.domain}:"
 
-            before_url_in_link = original_text[:url_only_start]
-            target_tokens_old.append(Unchanged(before_url_in_link))
-            target_tokens_new.append(Added(domain_prefix))
-            target_tokens_new.append(Unchanged("`" + link_text))
-            if space_before_angle:
-                target_tokens_new.append(Unchanged(space_before_angle + "<"))
-            else:
-                target_tokens_new.append(Unchanged("<"))
+        target_tokens_old: list[Token] = []
+        target_tokens_new: list[Token] = []
+        if start_idx > 0:
+            target_tokens_old.append(Unchanged(original_line[:start_idx]))
+            target_tokens_new.append(Unchanged(original_line[:start_idx]))
 
-            url_part = original_text[url_only_start:url_only_end]
-            target_tokens_old.append(Removed(url_part))
-
-            after_url_in_link = original_text[url_end_in_link:]
-            if after_url_in_link.startswith("`"):
-                closing_backtick = after_url_in_link[0]
-                underscores = after_url_in_link[1:]
-                closing_angle = original_text[url_only_end:url_end_in_link]
-                target_tokens_new.append(Added(target))
-                target_tokens_new.append(Unchanged(closing_angle + closing_backtick))
-                target_tokens_old.append(Unchanged(closing_angle + closing_backtick))
-                target_tokens_old.append(Removed(underscores))
-            else:
-                closing_angle = original_text[url_only_end:url_end_in_link]
-                target_tokens_old.append(Unchanged(closing_angle))
-                target_tokens_old.append(Removed(after_url_in_link))
-                target_tokens_new.append(Added(target))
-                target_tokens_new.append(Unchanged(closing_angle))
-
-            if end_idx < len(original_line):
-                target_tokens_old.append(Unchanged(original_line[end_idx:]))
-                target_tokens_new.append(Unchanged(original_line[end_idx:]))
+        before_url_in_link = original_text[:url_only_start]
+        target_tokens_old.append(Unchanged(before_url_in_link))
+        target_tokens_new.append(Added(domain_prefix))
+        target_tokens_new.append(Unchanged("`" + link_text))
+        if space_before_angle:
+            target_tokens_new.append(Unchanged(space_before_angle + "<"))
         else:
-            target_tokens_old = []
-            target_tokens_new = []
-            if start_idx > 0:
-                target_tokens_old.append(Unchanged(original_line[:start_idx]))
-                target_tokens_new.append(Unchanged(original_line[:start_idx]))
-            target_tokens_old.append(Removed(original_text))
-            domain_prefix = f":{lookup_result.domain}:"
-            target_suffix = f" <{target}>`"
-            target_tokens_new.append(Added(domain_prefix))
-            target_tokens_new.append(Unchanged("`" + link_text))
-            target_tokens_new.append(Added(target_suffix))
-            if end_idx < len(original_line):
-                target_tokens_old.append(Unchanged(original_line[end_idx:]))
-                target_tokens_new.append(Unchanged(original_line[end_idx:]))
+            target_tokens_new.append(Unchanged("<"))
 
-        ctx_before_tokens_old = (Unchanged(context_before_str),)
-        ctx_before_tokens_new = (Unchanged(context_before_str),)
+        url_part = original_text[url_only_start:url_only_end]
+        target_tokens_old.append(Removed(url_part))
 
-        ctx_after_tokens_old = (Unchanged(context_after_str),)
-        ctx_after_tokens_new = (Unchanged(context_after_str),)
+        after_url_in_link = original_text[url_end_in_link:]
+        if after_url_in_link.startswith("`"):
+            closing_backtick = after_url_in_link[0]
+            underscores = after_url_in_link[1:]
+            closing_angle = original_text[url_only_end:url_end_in_link]
+            target_tokens_new.append(Added(target))
+            target_tokens_new.append(Unchanged(closing_angle + closing_backtick))
+            target_tokens_old.append(Unchanged(closing_angle + closing_backtick))
+            target_tokens_old.append(Removed(underscores))
+        else:
+            closing_angle = original_text[url_only_end:url_end_in_link]
+            target_tokens_old.append(Unchanged(closing_angle))
+            target_tokens_old.append(Removed(after_url_in_link))
+            target_tokens_new.append(Added(target))
+            target_tokens_new.append(Unchanged(closing_angle))
 
-        context_old: OutputReplacementContext = (
-            ctx_before_tokens_old,
-            tuple(target_tokens_old),
-            ctx_after_tokens_old,
-        )
+        if end_idx < len(original_line):
+            target_tokens_old.append(Unchanged(original_line[end_idx:]))
+            target_tokens_new.append(Unchanged(original_line[end_idx:]))
+    else:
+        target_tokens_old = []
+        target_tokens_new = []
+        if start_idx > 0:
+            target_tokens_old.append(Unchanged(original_line[:start_idx]))
+            target_tokens_new.append(Unchanged(original_line[:start_idx]))
+        target_tokens_old.append(Removed(original_text))
+        domain_prefix = f":{lookup_result.domain}:"
+        target_suffix = f" <{target}>`"
+        target_tokens_new.append(Added(domain_prefix))
+        target_tokens_new.append(Unchanged("`" + link_text))
+        target_tokens_new.append(Added(target_suffix))
+        if end_idx < len(original_line):
+            target_tokens_old.append(Unchanged(original_line[end_idx:]))
+            target_tokens_new.append(Unchanged(original_line[end_idx:]))
 
-        context_new: OutputReplacementContext = (
-            ctx_before_tokens_new,
-            tuple(target_tokens_new),
-            ctx_after_tokens_new,
-        )
+    ctx_before_tokens_old = (Unchanged(context_before_str),)
+    ctx_before_tokens_new = (Unchanged(context_before_str),)
 
-        return ReplacementInfo(
-            context_old,
-            context_new,
-        )
-    return None
+    ctx_after_tokens_old = (Unchanged(context_after_str),)
+    ctx_after_tokens_new = (Unchanged(context_after_str),)
+
+    context_old: OutputReplacementContext = (
+        ctx_before_tokens_old,
+        tuple(target_tokens_old),
+        ctx_after_tokens_old,
+    )
+
+    context_new: OutputReplacementContext = (
+        ctx_before_tokens_new,
+        tuple(target_tokens_new),
+        ctx_after_tokens_new,
+    )
+
+    return ReplacementInfo(
+        context_old,
+        context_new,
+    )
 
 
 def _compute_simple_link_replacement(
