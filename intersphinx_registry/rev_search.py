@@ -82,8 +82,6 @@ class UrlReplacement(NamedTuple):
 
     Attributes
     ----------
-    filepath : str
-        Path to the RST file containing the URL
     line_num : int
         Line number where the URL was found
     matched_url : str
@@ -96,7 +94,6 @@ class UrlReplacement(NamedTuple):
         The inventory URL used for the lookup, or None
     """
 
-    filepath: str
     line_num: int
     matched_url: str
     context_old: OutputReplacementContext
@@ -564,8 +561,6 @@ def process_one_file(rst_file: Path):
     if not replaceable:
         return
 
-    filepath = str(rst_file)
-
     for lookup_result, line_infos in replaceable:
         for line_num, original_line in line_infos:
             context_before = all_lines[line_num - 2].rstrip() if line_num > 1 else ""
@@ -584,7 +579,6 @@ def process_one_file(rst_file: Path):
                 )
 
                 yield UrlReplacement(
-                    filepath,
                     line_num,
                     lookup_result.url,
                     replacement_info.context_old,
@@ -599,7 +593,6 @@ def process_one_file(rst_file: Path):
                     (Unchanged(context_after),),
                 )
                 yield UrlReplacement(
-                    filepath,
                     line_num,
                     lookup_result.url,
                     empty_context,
@@ -692,8 +685,8 @@ def search_one_file(rst_file: Path) -> None:
     rst_file : Path
         Path to the RST file to search and display results for
     """
+    display_path = _compress_user_path(str(rst_file))
     for replacement in process_one_file(rst_file):
-        display_path = _compress_user_path(replacement.filepath)
         print(f"{CYAN}{display_path}:{replacement.line_num}{RESET}")
 
         if replacement.context_old == replacement.context_new:
