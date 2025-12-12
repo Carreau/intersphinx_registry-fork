@@ -20,22 +20,15 @@ RESET = "\033[0m"
 class Unchanged(str):
     """Token representing unchanged text."""
 
-    pass
-
 
 class Removed(str):
     """Token representing removed text."""
-
-    pass
 
 
 class Added(str):
     """Token representing added text."""
 
-    pass
 
-
-# Token type: each token can be Unchanged, Removed, or Added
 Token = Union[Unchanged, Removed, Added]
 
 # OutputReplacementContext: tuple of three token sequences
@@ -166,6 +159,12 @@ class ReplacementInfo:
         )
 
 
+# TODO:
+# I'm pretty sure instead of having a before[Unchange|Removed] and after[Unchanged|added]
+# we can have a single diff[Unchange|Removed|added] but I't more complicated to code.
+# so if you think you can do it, please feel free.
+# we can likely properly find the index of URL(s), backticks and everything,
+# split and do the replacement on the token stream/
 def _compute_full_link_replacement(
     original_line: str,
     context_before_str: str,
