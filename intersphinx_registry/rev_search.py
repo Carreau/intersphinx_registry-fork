@@ -76,6 +76,39 @@ def normalise_token_stream(tokens: Tuple[Token, ...]) -> Tuple[Token, ...]:
     return tuple(normalized)
 
 
+def _make_line_tokens(
+    line: str,
+    start: int,
+    end: int,
+    old_text: str,
+    new_text: str,
+) -> tuple[tuple[Token, ...], tuple[Token, ...]]:
+    """
+    Build old and new token lists for a line where text is replaced.
+
+    Returns (old_tokens, new_tokens) where:
+    - old_tokens: [Unchanged(prefix), Removed(old_text), Unchanged(suffix)]
+    - new_tokens: [Unchanged(prefix), Added(new_text), Unchanged(suffix)]
+    """
+    old_tokens: list[Token] = []
+    new_tokens: list[Token] = []
+
+    if start > 0:
+        prefix = Unchanged(line[:start])
+        old_tokens.append(prefix)
+        new_tokens.append(prefix)
+
+    old_tokens.append(Removed(old_text))
+    new_tokens.append(Added(new_text))
+
+    if end < len(line):
+        suffix = Unchanged(line[end:])
+        old_tokens.append(suffix)
+        new_tokens.append(suffix)
+
+    return tuple(old_tokens), tuple(new_tokens)
+
+
 class UrlReplacement(NamedTuple):
     """
     Information about a URL replacement in an RST file.
@@ -120,40 +153,38 @@ class ReplacementContext(NamedTuple):
     context_after: str
 
 
-class ReplacementInfo:
-    """
-    Information about a computed replacement.
+def _normalize_replacement(
+    context_old: OutputReplacementContext,
+    context_new: OutputReplacementContext,
+) -> tuple[OutputReplacementContext, OutputReplacementContext]:
+    """Normalize token streams in both contexts."""
+    ctx_before_old, target_old, ctx_after_old = context_old
+    ctx_before_new, target_new, ctx_after_new = context_new
 
-    Attributes
-    ----------
-    context_old : OutputReplacementContext
-        The context before replacement: (context_before_tokens, target_line_tokens, context_after_tokens)
-        All tokens are Removed, representing the original state.
-    context_new : OutputReplacementContext
-        The context after replacement: (context_before_tokens, target_line_tokens, context_after_tokens)
-        Contains Removed and Added tokens showing the changes.
-    """
+    normalized_old = (
+        normalise_token_stream(ctx_before_old),
+        normalise_token_stream(target_old),
+        normalise_token_stream(ctx_after_old),
+    )
+    normalized_new = (
+        normalise_token_stream(ctx_before_new),
+        normalise_token_stream(target_new),
+        normalise_token_stream(ctx_after_new),
+    )
+    return normalized_old, normalized_new
 
-    def __init__(
-        self,
-        context_old: OutputReplacementContext,
-        context_new: OutputReplacementContext,
-    ):
-        """Initialize ReplacementInfo with normalized token streams."""
-        # Normalize all token sequences
-        ctx_before_old, target_old, ctx_after_old = context_old
-        ctx_before_new, target_new, ctx_after_new = context_new
 
-        self.context_old = (
-            normalise_token_stream(ctx_before_old),
-            normalise_token_stream(target_old),
-            normalise_token_stream(ctx_after_old),
-        )
-        self.context_new = (
-            normalise_token_stream(ctx_before_new),
-            normalise_token_stream(target_new),
-            normalise_token_stream(ctx_after_new),
-        )
+def _make_replacement(
+    context_before: str,
+    context_after: str,
+    target_tokens_old: tuple[Token, ...],
+    target_tokens_new: tuple[Token, ...],
+) -> tuple[OutputReplacementContext, OutputReplacementContext]:
+    """Build normalized replacement contexts with unchanged context lines."""
+    ctx = (Unchanged(context_before),), (Unchanged(context_after),)
+    context_old: OutputReplacementContext = (ctx[0], target_tokens_old, ctx[1])
+    context_new: OutputReplacementContext = (ctx[0], target_tokens_new, ctx[1])
+    return _normalize_replacement(context_old, context_new)
 
 
 # TODO:
@@ -168,7 +199,7 @@ def _compute_full_link_replacement(
     context_after_str: str,
     lookup_result: ReverseLookupResult,
     target: str,
-) -> Optional[ReplacementInfo]:
+) -> Optional[tuple[OutputReplacementContext, OutputReplacementContext]]:
     """
     Handle full RST link replacement.
 
@@ -188,98 +219,71 @@ def _compute_full_link_replacement(
 
     link_text = full_link_match.group(1).strip()
     original_text = full_link_match.group(0)
-
     start_idx = full_link_match.start()
     end_idx = full_link_match.end()
+    domain_prefix = f":{lookup_result.domain}:"
+
+    # Find where the URL is within the matched link text
     url_match_in_link = re.search(
         r"<" + re.escape(lookup_result.url) + r"[.,;:!?)]*>", original_text
     )
+
+    old_tokens: list[Token] = []
+    new_tokens: list[Token] = []
+
+    # Add prefix (text before the link)
+    if start_idx > 0:
+        prefix = Unchanged(original_line[:start_idx])
+        old_tokens.append(prefix)
+        new_tokens.append(prefix)
+
     if url_match_in_link:
-        url_start_in_link = url_match_in_link.start()
-        url_end_in_link = url_match_in_link.end()
-        url_only_start = url_start_in_link + 1
-        url_only_end = url_end_in_link - 1
+        # Fine-grained diff: show URL replacement within the link structure
+        url_start = url_match_in_link.start()
+        url_end = url_match_in_link.end()
 
-        space_before_angle = ""
-        if url_start_in_link > 0 and original_text[url_start_in_link - 1] == " ":
-            space_before_angle = " "
+        space_before = (
+            " " if url_start > 0 and original_text[url_start - 1] == " " else ""
+        )
 
-        domain_prefix = f":{lookup_result.domain}:"
+        # Old: `link text <URL>`_  (show parts around URL as unchanged)
+        old_tokens.append(
+            Unchanged(original_text[: url_start + 1])
+        )  # up to and including <
+        old_tokens.append(
+            Removed(original_text[url_start + 1 : url_end - 1])
+        )  # URL only
+        old_tokens.append(Unchanged(original_text[url_end - 1 : url_end]))  # >
 
-        target_tokens_old: list[Token] = []
-        target_tokens_new: list[Token] = []
-        if start_idx > 0:
-            target_tokens_old.append(Unchanged(original_line[:start_idx]))
-            target_tokens_new.append(Unchanged(original_line[:start_idx]))
-
-        before_url_in_link = original_text[:url_only_start]
-        target_tokens_old.append(Unchanged(before_url_in_link))
-        target_tokens_new.append(Added(domain_prefix))
-        target_tokens_new.append(Unchanged("`" + link_text))
-        if space_before_angle:
-            target_tokens_new.append(Unchanged(space_before_angle + "<"))
+        # Handle trailing backtick and underscores
+        after_angle = original_text[url_end:]
+        if after_angle.startswith("`"):
+            old_tokens.append(Unchanged(after_angle[0]))  # `
+            if len(after_angle) > 1:
+                old_tokens.append(Removed(after_angle[1:]))  # underscores
         else:
-            target_tokens_new.append(Unchanged("<"))
+            old_tokens.append(Removed(after_angle))
 
-        url_part = original_text[url_only_start:url_only_end]
-        target_tokens_old.append(Removed(url_part))
-
-        after_url_in_link = original_text[url_end_in_link:]
-        if after_url_in_link.startswith("`"):
-            closing_backtick = after_url_in_link[0]
-            underscores = after_url_in_link[1:]
-            closing_angle = original_text[url_only_end:url_end_in_link]
-            target_tokens_new.append(Added(target))
-            target_tokens_new.append(Unchanged(closing_angle + closing_backtick))
-            target_tokens_old.append(Unchanged(closing_angle + closing_backtick))
-            target_tokens_old.append(Removed(underscores))
-        else:
-            closing_angle = original_text[url_only_end:url_end_in_link]
-            target_tokens_old.append(Unchanged(closing_angle))
-            target_tokens_old.append(Removed(after_url_in_link))
-            target_tokens_new.append(Added(target))
-            target_tokens_new.append(Unchanged(closing_angle))
-
-        if end_idx < len(original_line):
-            target_tokens_old.append(Unchanged(original_line[end_idx:]))
-            target_tokens_new.append(Unchanged(original_line[end_idx:]))
+        # New: :domain:`link text <target>`
+        new_tokens.append(Added(domain_prefix))
+        new_tokens.append(Unchanged("`" + link_text + space_before + "<"))
+        new_tokens.append(Added(target))
+        new_tokens.append(Unchanged(">`"))
     else:
-        target_tokens_old = []
-        target_tokens_new = []
-        if start_idx > 0:
-            target_tokens_old.append(Unchanged(original_line[:start_idx]))
-            target_tokens_new.append(Unchanged(original_line[:start_idx]))
-        target_tokens_old.append(Removed(original_text))
-        domain_prefix = f":{lookup_result.domain}:"
-        target_suffix = f" <{target}>`"
-        target_tokens_new.append(Added(domain_prefix))
-        target_tokens_new.append(Unchanged("`" + link_text))
-        target_tokens_new.append(Added(target_suffix))
-        if end_idx < len(original_line):
-            target_tokens_old.append(Unchanged(original_line[end_idx:]))
-            target_tokens_new.append(Unchanged(original_line[end_idx:]))
+        # Simple replacement: whole link becomes role reference
+        old_tokens.append(Removed(original_text))
+        new_tokens.append(Added(domain_prefix))
+        new_tokens.append(Unchanged("`" + link_text))
+        new_tokens.append(Added(f" <{target}>`"))
 
-    ctx_before_tokens_old = (Unchanged(context_before_str),)
-    ctx_before_tokens_new = (Unchanged(context_before_str),)
+    # Add suffix (text after the link)
+    if end_idx < len(original_line):
+        suffix = Unchanged(original_line[end_idx:])
+        old_tokens.append(suffix)
+        new_tokens.append(suffix)
 
-    ctx_after_tokens_old = (Unchanged(context_after_str),)
-    ctx_after_tokens_new = (Unchanged(context_after_str),)
-
-    context_old: OutputReplacementContext = (
-        ctx_before_tokens_old,
-        tuple(target_tokens_old),
-        ctx_after_tokens_old,
-    )
-
-    context_new: OutputReplacementContext = (
-        ctx_before_tokens_new,
-        tuple(target_tokens_new),
-        ctx_after_tokens_new,
-    )
-
-    return ReplacementInfo(
-        context_old,
-        context_new,
+    return _make_replacement(
+        context_before_str, context_after_str, tuple(old_tokens), tuple(new_tokens)
     )
 
 
@@ -290,7 +294,7 @@ def _compute_simple_link_replacement(
     lookup_result: ReverseLookupResult,
     target: str,
     rst_ref: str,
-) -> Optional[ReplacementInfo]:
+) -> Optional[tuple[OutputReplacementContext, OutputReplacementContext]]:
     """
     Handle simple RST link replacement (may span multiple lines).
 
@@ -311,96 +315,36 @@ def _compute_simple_link_replacement(
     start_idx = simple_link_match.start()
     end_idx = simple_link_match.end()
 
+    # Check if link text is on the previous line (multi-line case)
     link_text_match = re.search(r"`([^`]+)$", context_before_str)
     if link_text_match:
         link_text = link_text_match.group(1).strip()
 
-        ctx_match_start = link_text_match.start()
-        ctx_match_end = link_text_match.end()
-        ctx_before_tokens_old_list: list[Token] = []
-        ctx_before_tokens_new_list: list[Token] = []
-        if ctx_match_start > 0:
-            ctx_before_tokens_old_list.append(
-                Unchanged(context_before_str[:ctx_match_start])
-            )
-            ctx_before_tokens_new_list.append(
-                Unchanged(context_before_str[:ctx_match_start])
-            )
-        # The `[^`]+` part becomes the domain role prefix
-        removed_text = context_before_str[ctx_match_start:ctx_match_end]
-        ctx_before_tokens_old_list.append(Removed(removed_text))
-        new_context_before_prefix = f":{lookup_result.domain}:`"
-        ctx_before_tokens_new_list.append(Added(new_context_before_prefix + link_text))
-        if ctx_match_end < len(context_before_str):
-            ctx_before_tokens_old_list.append(
-                Unchanged(context_before_str[ctx_match_end:])
-            )
-            ctx_before_tokens_new_list.append(
-                Unchanged(context_before_str[ctx_match_end:])
-            )
-
-        target_tokens_old_list: list[Token] = []
-        target_tokens_new_list: list[Token] = []
-        if start_idx > 0:
-            target_tokens_old_list.append(Unchanged(original_line[:start_idx]))
-            target_tokens_new_list.append(Unchanged(original_line[:start_idx]))
-        target_tokens_old_list.append(Removed(original_text))
-        target_tokens_new_list.append(Added(f"<{target}>`"))
-        if end_idx < len(original_line):
-            target_tokens_old_list.append(Unchanged(original_line[end_idx:]))
-            target_tokens_new_list.append(Unchanged(original_line[end_idx:]))
-
-        ctx_after_tokens_old = (Unchanged(context_after_str),)
-        ctx_after_tokens_new = (Unchanged(context_after_str),)
-
-        context_old = (
-            tuple(ctx_before_tokens_old_list),
-            tuple(target_tokens_old_list),
-            ctx_after_tokens_old,
+        # Build context_before tokens (with changes)
+        ctx_old, ctx_new = _make_line_tokens(
+            context_before_str,
+            link_text_match.start(),
+            link_text_match.end(),
+            context_before_str[link_text_match.start() : link_text_match.end()],
+            f":{lookup_result.domain}:`{link_text}",
         )
 
-        context_new = (
-            tuple(ctx_before_tokens_new_list),
-            tuple(target_tokens_new_list),
-            ctx_after_tokens_new,
+        # Build target line tokens
+        target_old, target_new = _make_line_tokens(
+            original_line, start_idx, end_idx, original_text, f"<{target}>`"
         )
 
-        return ReplacementInfo(
-            context_old,
-            context_new,
-        )
+        ctx_after = (Unchanged(context_after_str),)
+        context_old: OutputReplacementContext = (ctx_old, target_old, ctx_after)
+        context_new: OutputReplacementContext = (ctx_new, target_new, ctx_after)
+        return _normalize_replacement(context_old, context_new)
 
-    target_tokens_old_list2: list[Token] = []
-    target_tokens_new_list2: list[Token] = []
-    if start_idx > 0:
-        target_tokens_old_list2.append(Unchanged(original_line[:start_idx]))
-        target_tokens_new_list2.append(Unchanged(original_line[:start_idx]))
-    target_tokens_old_list2.append(Removed(original_text))
-    target_tokens_new_list2.append(Added(rst_ref))
-    if end_idx < len(original_line):
-        target_tokens_old_list2.append(Unchanged(original_line[end_idx:]))
-        target_tokens_new_list2.append(Unchanged(original_line[end_idx:]))
-
-    ctx_before_tokens_old = (Unchanged(context_before_str),)
-    ctx_before_tokens_new = (Unchanged(context_before_str),)
-    ctx_after_tokens_old = (Unchanged(context_after_str),)
-    ctx_after_tokens_new = (Unchanged(context_after_str),)
-
-    context_old = (
-        ctx_before_tokens_old,
-        tuple(target_tokens_old_list2),
-        ctx_after_tokens_old,
+    # Simple case: just replace the link on the target line
+    old_tokens, new_tokens = _make_line_tokens(
+        original_line, start_idx, end_idx, original_text, rst_ref
     )
-
-    context_new = (
-        ctx_before_tokens_new,
-        tuple(target_tokens_new_list2),
-        ctx_after_tokens_new,
-    )
-
-    return ReplacementInfo(
-        context_old,
-        context_new,
+    return _make_replacement(
+        context_before_str, context_after_str, old_tokens, new_tokens
     )
 
 
@@ -410,7 +354,7 @@ def _compute_url_replacement(
     context_after_str: str,
     lookup_result: ReverseLookupResult,
     rst_ref: str,
-) -> ReplacementInfo:
+) -> tuple[OutputReplacementContext, OutputReplacementContext]:
     """
     Handle plain URL replacement in text.
 
@@ -423,94 +367,49 @@ def _compute_url_replacement(
     """
     url_match = re.search(re.escape(lookup_result.url) + r"[.,;:!?)]*", original_line)
     if url_match:
-        start_idx = url_match.start()
-        end_idx = url_match.end()
-
-        target_tokens_old_list3: list[Token] = []
-        target_tokens_new_list3: list[Token] = []
-        if start_idx > 0:
-            target_tokens_old_list3.append(Unchanged(original_line[:start_idx]))
-            target_tokens_new_list3.append(Unchanged(original_line[:start_idx]))
-        target_tokens_old_list3.append(Removed(lookup_result.url))
-        target_tokens_new_list3.append(Added(rst_ref))
-        if end_idx < len(original_line):
-            target_tokens_old_list3.append(Unchanged(original_line[end_idx:]))
-            target_tokens_new_list3.append(Unchanged(original_line[end_idx:]))
+        old_tokens, new_tokens = _make_line_tokens(
+            original_line,
+            url_match.start(),
+            url_match.end(),
+            lookup_result.url,
+            rst_ref,
+        )
     else:
-        target_tokens_old_list3 = [Removed(original_line)]
-        target_tokens_new_list3 = [Added(rst_ref)]
+        old_tokens = (Removed(original_line),)
+        new_tokens = (Added(rst_ref),)
 
-    ctx_before_tokens_old = (Unchanged(context_before_str),)
-    ctx_before_tokens_new = (Unchanged(context_before_str),)
-    ctx_after_tokens_old = (Unchanged(context_after_str),)
-    ctx_after_tokens_new = (Unchanged(context_after_str),)
-
-    context_old: OutputReplacementContext = (
-        ctx_before_tokens_old,
-        tuple(target_tokens_old_list3),
-        ctx_after_tokens_old,
-    )
-
-    context_new: OutputReplacementContext = (
-        ctx_before_tokens_new,
-        tuple(target_tokens_new_list3),
-        ctx_after_tokens_new,
-    )
-
-    return ReplacementInfo(
-        context_old,
-        context_new,
+    return _make_replacement(
+        context_before_str, context_after_str, old_tokens, new_tokens
     )
 
 
 def _compute_replacement(
     original: ReplacementContext,
     lookup_result: ReverseLookupResult,
-) -> ReplacementInfo:
+) -> tuple[OutputReplacementContext, OutputReplacementContext]:
     """
     Compute the replacement line(s) for a URL in an RST file.
 
-    Parameters
-    ----------
-    original : ReplacementContext
-        The original lines (context_before, target_line, context_after)
-    lookup_result : ReverseLookupResult
-        The reverse lookup result containing url, package, domain, rst_entry, etc.
-
-    Returns
-    -------
-    ReplacementInfo
-        A named tuple with (context_old, context_new).
-        - context_old: OutputReplacementContext with all Removed tokens (original state)
-        - context_new: OutputReplacementContext with Removed/Added tokens (modified state)
+    Tries patterns in order: full RST link, simple link, plain URL.
+    Returns (context_old, context_new) tuple of normalized token streams.
     """
     target = f"{lookup_result.package}:{lookup_result.rst_entry}"
     rst_ref = f":{lookup_result.domain}:`{target}`"
-
-    original_line = original.target_line
-    context_before_str = original.context_before
-    context_after_str = original.context_after
+    ctx_before, line, ctx_after = original
 
     result = _compute_full_link_replacement(
-        original_line, context_before_str, context_after_str, lookup_result, target
+        line, ctx_before, ctx_after, lookup_result, target
     )
     if result is not None:
         return result
 
     result = _compute_simple_link_replacement(
-        original_line,
-        context_before_str,
-        context_after_str,
-        lookup_result,
-        target,
-        rst_ref,
+        line, ctx_before, ctx_after, lookup_result, target, rst_ref
     )
     if result is not None:
         return result
 
-    return _compute_url_replacement(
-        original_line, context_before_str, context_after_str, lookup_result, rst_ref
-    )
+    return _compute_url_replacement(line, ctx_before, ctx_after, lookup_result, rst_ref)
 
 
 def process_one_file(rst_file: Path):
@@ -569,20 +468,15 @@ def process_one_file(rst_file: Path):
             )
 
             if lookup_result.rst_entry is not None:
-                replacement_info = _compute_replacement(
-                    ReplacementContext(
-                        context_before,
-                        original_line,
-                        context_after,
-                    ),
+                context_old, context_new = _compute_replacement(
+                    ReplacementContext(context_before, original_line, context_after),
                     lookup_result,
                 )
-
                 yield UrlReplacement(
                     line_num,
                     lookup_result.url,
-                    replacement_info.context_old,
-                    replacement_info.context_new,
+                    context_old,
+                    context_new,
                     lookup_result.inventory_url,
                 )
             else:

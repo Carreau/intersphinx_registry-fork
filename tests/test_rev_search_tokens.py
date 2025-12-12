@@ -5,7 +5,6 @@ import pytest
 from intersphinx_registry.rev_search import (
     Added,
     ReplacementContext,
-    ReplacementInfo,
     Removed,
     Unchanged,
     _compute_replacement,
@@ -32,7 +31,7 @@ from intersphinx_registry.reverse_lookup import ReverseLookupResult
                 None,
                 "https://setuptools.pypa.io/en/latest/setuptools.html",
             ),
-            ReplacementInfo(
+            (
                 (
                     (Unchanged("For more details, see the"),),
                     (
@@ -72,7 +71,7 @@ from intersphinx_registry.reverse_lookup import ReverseLookupResult
                 None,
                 "https://setuptools.pypa.io/en/latest/setuptools.html",
             ),
-            ReplacementInfo(
+            (
                 (
                     (Unchanged(""),),
                     (
@@ -114,7 +113,7 @@ from intersphinx_registry.reverse_lookup import ReverseLookupResult
                 None,
                 "https://setuptools.pypa.io/en/latest/setuptools.html",
             ),
-            ReplacementInfo(
+            (
                 (
                     (Unchanged(""),),
                     (
@@ -156,7 +155,7 @@ from intersphinx_registry.reverse_lookup import ReverseLookupResult
                 None,
                 "https://setuptools.pypa.io/en/latest/setuptools.html",
             ),
-            ReplacementInfo(
+            (
                 (
                     (Unchanged(""),),
                     (
@@ -193,9 +192,8 @@ from intersphinx_registry.reverse_lookup import ReverseLookupResult
 )
 def test_full_link_tokenization(original, lookup_result, expected):
     """Test that full link replacement tokenizes correctly."""
-    result = _compute_replacement(original, lookup_result)
+    context_old, context_new = _compute_replacement(original, lookup_result)
+    expected_old, expected_new = expected
 
-    # Compare normalized context_old and context_new
-    # Normalization happens automatically in ReplacementInfo.__init__
-    assert result.context_old == expected.context_old, f"context_old mismatch"
-    assert result.context_new == expected.context_new, f"context_new mismatch"
+    assert context_old == expected_old, "context_old mismatch"
+    assert context_new == expected_new, "context_new mismatch"
