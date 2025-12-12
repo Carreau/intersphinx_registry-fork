@@ -307,97 +307,64 @@ def _compute_simple_link_replacement(
     simple_link_match = re.search(
         r"`?<" + re.escape(lookup_result.url) + r"[.,;:!?)]*>`__?", original_line
     )
-    if simple_link_match:
-        original_text = simple_link_match.group(0)
-        start_idx = simple_link_match.start()
-        end_idx = simple_link_match.end()
+    if not simple_link_match:
+        return None
 
-        link_text_match = re.search(r"`([^`]+)$", context_before_str)
-        if link_text_match:
-            link_text = link_text_match.group(1).strip()
+    original_text = simple_link_match.group(0)
+    start_idx = simple_link_match.start()
+    end_idx = simple_link_match.end()
 
-            ctx_match_start = link_text_match.start()
-            ctx_match_end = link_text_match.end()
-            ctx_before_tokens_old_list: list[Token] = []
-            ctx_before_tokens_new_list: list[Token] = []
-            if ctx_match_start > 0:
-                ctx_before_tokens_old_list.append(
-                    Unchanged(context_before_str[:ctx_match_start])
-                )
-                ctx_before_tokens_new_list.append(
-                    Unchanged(context_before_str[:ctx_match_start])
-                )
-            # The `[^`]+` part becomes the domain role prefix
-            removed_text = context_before_str[ctx_match_start:ctx_match_end]
-            ctx_before_tokens_old_list.append(Removed(removed_text))
-            new_context_before_prefix = f":{lookup_result.domain}:`"
+    link_text_match = re.search(r"`([^`]+)$", context_before_str)
+    if link_text_match:
+        link_text = link_text_match.group(1).strip()
+
+        ctx_match_start = link_text_match.start()
+        ctx_match_end = link_text_match.end()
+        ctx_before_tokens_old_list: list[Token] = []
+        ctx_before_tokens_new_list: list[Token] = []
+        if ctx_match_start > 0:
+            ctx_before_tokens_old_list.append(
+                Unchanged(context_before_str[:ctx_match_start])
+            )
             ctx_before_tokens_new_list.append(
-                Added(new_context_before_prefix + link_text)
+                Unchanged(context_before_str[:ctx_match_start])
             )
-            if ctx_match_end < len(context_before_str):
-                ctx_before_tokens_old_list.append(
-                    Unchanged(context_before_str[ctx_match_end:])
-                )
-                ctx_before_tokens_new_list.append(
-                    Unchanged(context_before_str[ctx_match_end:])
-                )
-
-            target_tokens_old_list: list[Token] = []
-            target_tokens_new_list: list[Token] = []
-            if start_idx > 0:
-                target_tokens_old_list.append(Unchanged(original_line[:start_idx]))
-                target_tokens_new_list.append(Unchanged(original_line[:start_idx]))
-            target_tokens_old_list.append(Removed(original_text))
-            target_tokens_new_list.append(Added(f"<{target}>`"))
-            if end_idx < len(original_line):
-                target_tokens_old_list.append(Unchanged(original_line[end_idx:]))
-                target_tokens_new_list.append(Unchanged(original_line[end_idx:]))
-
-            ctx_after_tokens_old = (Unchanged(context_after_str),)
-            ctx_after_tokens_new = (Unchanged(context_after_str),)
-
-            context_old = (
-                tuple(ctx_before_tokens_old_list),
-                tuple(target_tokens_old_list),
-                ctx_after_tokens_old,
+        # The `[^`]+` part becomes the domain role prefix
+        removed_text = context_before_str[ctx_match_start:ctx_match_end]
+        ctx_before_tokens_old_list.append(Removed(removed_text))
+        new_context_before_prefix = f":{lookup_result.domain}:`"
+        ctx_before_tokens_new_list.append(Added(new_context_before_prefix + link_text))
+        if ctx_match_end < len(context_before_str):
+            ctx_before_tokens_old_list.append(
+                Unchanged(context_before_str[ctx_match_end:])
+            )
+            ctx_before_tokens_new_list.append(
+                Unchanged(context_before_str[ctx_match_end:])
             )
 
-            context_new = (
-                tuple(ctx_before_tokens_new_list),
-                tuple(target_tokens_new_list),
-                ctx_after_tokens_new,
-            )
-
-            return ReplacementInfo(
-                context_old,
-                context_new,
-            )
-
-        target_tokens_old_list2: list[Token] = []
-        target_tokens_new_list2: list[Token] = []
+        target_tokens_old_list: list[Token] = []
+        target_tokens_new_list: list[Token] = []
         if start_idx > 0:
-            target_tokens_old_list2.append(Unchanged(original_line[:start_idx]))
-            target_tokens_new_list2.append(Unchanged(original_line[:start_idx]))
-        target_tokens_old_list2.append(Removed(original_text))
-        target_tokens_new_list2.append(Added(rst_ref))
+            target_tokens_old_list.append(Unchanged(original_line[:start_idx]))
+            target_tokens_new_list.append(Unchanged(original_line[:start_idx]))
+        target_tokens_old_list.append(Removed(original_text))
+        target_tokens_new_list.append(Added(f"<{target}>`"))
         if end_idx < len(original_line):
-            target_tokens_old_list2.append(Unchanged(original_line[end_idx:]))
-            target_tokens_new_list2.append(Unchanged(original_line[end_idx:]))
+            target_tokens_old_list.append(Unchanged(original_line[end_idx:]))
+            target_tokens_new_list.append(Unchanged(original_line[end_idx:]))
 
-        ctx_before_tokens_old = (Unchanged(context_before_str),)
-        ctx_before_tokens_new = (Unchanged(context_before_str),)
         ctx_after_tokens_old = (Unchanged(context_after_str),)
         ctx_after_tokens_new = (Unchanged(context_after_str),)
 
         context_old = (
-            ctx_before_tokens_old,
-            tuple(target_tokens_old_list2),
+            tuple(ctx_before_tokens_old_list),
+            tuple(target_tokens_old_list),
             ctx_after_tokens_old,
         )
 
         context_new = (
-            ctx_before_tokens_new,
-            tuple(target_tokens_new_list2),
+            tuple(ctx_before_tokens_new_list),
+            tuple(target_tokens_new_list),
             ctx_after_tokens_new,
         )
 
@@ -405,7 +372,39 @@ def _compute_simple_link_replacement(
             context_old,
             context_new,
         )
-    return None
+
+    target_tokens_old_list2: list[Token] = []
+    target_tokens_new_list2: list[Token] = []
+    if start_idx > 0:
+        target_tokens_old_list2.append(Unchanged(original_line[:start_idx]))
+        target_tokens_new_list2.append(Unchanged(original_line[:start_idx]))
+    target_tokens_old_list2.append(Removed(original_text))
+    target_tokens_new_list2.append(Added(rst_ref))
+    if end_idx < len(original_line):
+        target_tokens_old_list2.append(Unchanged(original_line[end_idx:]))
+        target_tokens_new_list2.append(Unchanged(original_line[end_idx:]))
+
+    ctx_before_tokens_old = (Unchanged(context_before_str),)
+    ctx_before_tokens_new = (Unchanged(context_before_str),)
+    ctx_after_tokens_old = (Unchanged(context_after_str),)
+    ctx_after_tokens_new = (Unchanged(context_after_str),)
+
+    context_old = (
+        ctx_before_tokens_old,
+        tuple(target_tokens_old_list2),
+        ctx_after_tokens_old,
+    )
+
+    context_new = (
+        ctx_before_tokens_new,
+        tuple(target_tokens_new_list2),
+        ctx_after_tokens_new,
+    )
+
+    return ReplacementInfo(
+        context_old,
+        context_new,
+    )
 
 
 def _compute_url_replacement(
