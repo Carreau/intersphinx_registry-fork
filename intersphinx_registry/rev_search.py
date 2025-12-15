@@ -1,4 +1,8 @@
 import re
+import sys
+import tty
+import termios
+import webbrowser
 from pathlib import Path
 from typing import Iterable, NamedTuple, Optional, Tuple, Union
 
@@ -38,6 +42,191 @@ OutputReplacementContext = Tuple[
     Tuple[Token, ...],
     Tuple[Token, ...],
 ]
+
+
+class QuitInteractive(Exception):
+    """Exception raised when user wants to quit interactive mode."""
+
+    pass
+
+
+def _getch() -> str:
+    """
+    Read a single character from stdin without requiring Enter.
+
+    Uses termios to put terminal in raw mode temporarily, reads one character,
+    then restores the original terminal settings.
+
+    Returns
+    -------
+    str
+        The single character pressed by the user
+    """
+    if not sys.stdin.isatty():
+        # Fallback for non-TTY environments
+        return sys.stdin.read(1)
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        ch = sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    return ch
+
+
+def prompt_replaceable_url() -> bool:
+    """
+    Prompt user to decide whether to replace a URL that was found in inventory.
+
+    Displays: [s]kip, [r]eplace, [q]uit?
+
+    Returns
+    -------
+    bool
+        True if user wants to replace, False if skip
+
+    Raises
+    ------
+    QuitInteractive
+        If user presses 'q' to quit
+    """
+    while True:
+        print("    [s]kip, [r]eplace, [q]uit? ", end="", flush=True)
+        key = _getch().lower()
+        print(key)  # Echo the keypress
+
+        if key == "r":
+            return True
+        elif key == "s":
+            return False
+        elif key == "q":
+            raise QuitInteractive()
+        elif key == "\x03":  # Ctrl+C
+            raise KeyboardInterrupt()
+        else:
+            print(f"    Invalid key '{key}'. Please press s, r, or q.")
+
+
+def prompt_non_replaceable_url(url: str) -> str:
+    """
+    Prompt user for action on a URL that couldn't be found in any inventory.
+
+    Displays: [s]kip, [o]pen browser, [i]gnore, [q]uit?
+
+    Parameters
+    ----------
+    url : str
+        The URL that couldn't be replaced
+
+    Returns
+    -------
+    str
+        One of: 'skip', 'open', 'ignore'
+
+    Raises
+    ------
+    QuitInteractive
+        If user presses 'q' to quit
+    """
+    while True:
+        print("    [s]kip, [o]pen browser, [i]gnore, [q]uit? ", end="", flush=True)
+        key = _getch().lower()
+        print(key)  # Echo the keypress
+
+        if key == "s":
+            return "skip"
+        elif key == "o":
+            return "open"
+        elif key == "i":
+            return "ignore"
+        elif key == "q":
+            raise QuitInteractive()
+        elif key == "\x03":  # Ctrl+C
+            raise KeyboardInterrupt()
+        else:
+            print(f"    Invalid key '{key}'. Please press s, o, i, or q.")
+
+
+def open_url_in_browser(url: str) -> bool:
+    """
+    Open a URL in the default web browser.
+
+    Parameters
+    ----------
+    url : str
+        The URL to open
+
+    Returns
+    -------
+    bool
+        True if successful, False otherwise
+    """
+    try:
+        webbrowser.open(url)
+        print(f"    Opened {url} in browser")
+        return True
+    except Exception as e:
+        print(f"    Failed to open browser: {e}")
+        return False
+
+
+def apply_replacements_to_file(file_path: Path, replacements: list) -> int:
+    """
+    Apply approved URL replacements to a file.
+
+    Reads the file, applies all replacements in reverse order (bottom-up)
+    to preserve line numbers, then writes the modified content back.
+
+    Parameters
+    ----------
+    file_path : Path
+        Path to the file to modify
+    replacements : list[UrlReplacement]
+        List of UrlReplacement objects to apply
+
+    Returns
+    -------
+    int
+        Number of replacements applied
+    """
+    if not replacements:
+        return 0
+
+    # Read the entire file
+    with open(file_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    # Sort replacements by line number in descending order (bottom-up)
+    # to preserve line numbers during replacement
+    sorted_replacements = sorted(replacements, key=lambda r: r.line_num, reverse=True)
+
+    count = 0
+    for replacement in sorted_replacements:
+        # Get the new tokens for the target line
+        _, target_tokens_new, _ = replacement.context_new
+
+        # Reconstruct the new line from tokens
+        new_line_content = "".join(str(token) for token in target_tokens_new)
+
+        # Line numbers are 1-indexed, list is 0-indexed
+        line_idx = replacement.line_num - 1
+
+        if 0 <= line_idx < len(lines):
+            # Preserve the original line ending
+            original_line = lines[line_idx]
+            if original_line.endswith("\n"):
+                new_line_content += "\n"
+
+            lines[line_idx] = new_line_content
+            count += 1
+
+    # Write the modified content back to the file
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+
+    return count
 
 
 def normalise_token_stream(tokens: Tuple[Token, ...]) -> Tuple[Token, ...]:
@@ -546,7 +735,7 @@ def format_tokens(
     return output
 
 
-def rev_search(directory: str) -> None:
+def rev_search(directory: str, interactive: bool = False) -> None:
     """
     Search for URLs in .rst files that can be replaced with Sphinx references.
 
@@ -554,6 +743,8 @@ def rev_search(directory: str) -> None:
     ----------
     directory : str
         Path to a directory to search for .rst files, or a single .rst file path
+    interactive : bool, optional
+        If True, interactively prompt user to approve each replacement before applying
     """
     if not _are_dependencies_available():
         return
@@ -566,11 +757,18 @@ def rev_search(directory: str) -> None:
     else:
         rst_files = directory_path.rglob("*.rst")
 
-    for rst_file in rst_files:
-        search_one_file(rst_file)
+    try:
+        for rst_file in rst_files:
+            search_one_file(rst_file, interactive=interactive)
+    except QuitInteractive:
+        print(f"\n{YELLOW}Quit. Exiting.{RESET}")
+        return
+    except KeyboardInterrupt:
+        print(f"\n{YELLOW}Interrupted. Exiting.{RESET}")
+        return
 
 
-def search_one_file(rst_file: Path) -> None:
+def search_one_file(rst_file: Path, interactive: bool = False) -> None:
     """
     Search a single RST file and print formatted diffs for replaceable URLs.
 
@@ -580,141 +778,187 @@ def search_one_file(rst_file: Path) -> None:
     Parameters
     ----------
     rst_file : Path
-        Path to the RST file to search and display results for
+        Path to the .rst file to search
+    interactive : bool, optional
+        If True, interactively prompt user to approve each replacement before applying
     """
     display_path = _compress_user_path(str(rst_file))
-    for replacement in process_one_file(rst_file):
-        print(f"{CYAN}{display_path}:{replacement.line_num}{RESET}")
 
-        if replacement.context_old == replacement.context_new:
-            ctx_before_tokens_old, target_tokens_old, ctx_after_tokens_old = (
-                replacement.context_old
-            )
+    # In interactive mode, collect all replacements first
+    if interactive:
+        replacements_list = list(process_one_file(rst_file))
+        approved_replacements = []
 
-            if ctx_before_tokens_old:
-                print(format_tokens(ctx_before_tokens_old, "       "))
+        for replacement in replacements_list:
+            _print_replacement_diff(display_path, replacement)
 
-            print(format_tokens(target_tokens_old, "     ? ", defaultFG=BLUE))
+            # Check if this is a non-replaceable URL (context_old == context_new)
+            if replacement.context_old == replacement.context_new:
+                # URL not found in inventory
+                action = prompt_non_replaceable_url(replacement.matched_url)
+                if action == "open":
+                    open_url_in_browser(replacement.matched_url)
+                elif action == "ignore":
+                    # TODO: implement ignore functionality in future
+                    print("    (Ignore functionality not yet implemented)")
+                # For 'skip' or after 'open'/'ignore', just continue
+            else:
+                # URL can be replaced
+                should_replace = prompt_replaceable_url()
+                if should_replace:
+                    approved_replacements.append(replacement)
 
-            if ctx_after_tokens_old:
-                print(format_tokens(ctx_after_tokens_old, "       "))
+        # Apply all approved replacements
+        if approved_replacements:
+            count = apply_replacements_to_file(rst_file, approved_replacements)
+            print(f"\n{GREEN}Applied {count} replacement(s) to {display_path}{RESET}\n")
+    else:
+        # Non-interactive mode: just print the diffs as before
+        for replacement in process_one_file(rst_file):
+            _print_replacement_diff(display_path, replacement)
 
-            print()
-            continue
 
+def _print_replacement_diff(display_path: str, replacement) -> None:
+    """
+    Print the formatted diff for a single URL replacement.
+
+    Parameters
+    ----------
+    display_path : str
+        Compressed path to display
+    replacement : UrlReplacement
+        The replacement to display
+    """
+    print(f"{CYAN}{display_path}:{replacement.line_num}{RESET}")
+
+    if replacement.context_old == replacement.context_new:
         ctx_before_tokens_old, target_tokens_old, ctx_after_tokens_old = (
             replacement.context_old
         )
-        ctx_before_tokens_new, target_tokens_new, ctx_after_tokens_new = (
-            replacement.context_new
-        )
 
-        if ctx_before_tokens_old or ctx_before_tokens_new:
-            if ctx_before_tokens_old != ctx_before_tokens_new:
-                print(
-                    format_tokens(
-                        ctx_before_tokens_old,
-                        "     - ",
-                        defaultFG=RED,
-                        RemovedHighlight=RED_BG,
-                    )
-                )
-            else:
-                print(format_tokens(ctx_before_tokens_old, "       "))
-        print(
-            format_tokens(
-                target_tokens_old, "     - ", defaultFG=RED, RemovedHighlight=RED_BG
-            )
-        )
+        if ctx_before_tokens_old:
+            print(format_tokens(ctx_before_tokens_old, "       "))
 
-        if replacement.inventory_url:
-            old_text = "".join(
-                str(token)
-                for token in target_tokens_old
-                if not isinstance(token, Added)
-            )
-            if replacement.inventory_url not in old_text:
-                https_pos = old_text.find("https://")
-                if https_pos >= 0:
-                    spaces = " " * (7 + https_pos)
-                else:
-                    spaces = "       "
+        print(format_tokens(target_tokens_old, "     ? ", defaultFG=BLUE))
 
-                matched_url = replacement.matched_url
-                inventory_url = replacement.inventory_url
-
-                prefix_len = 0
-                while (
-                    prefix_len < len(matched_url)
-                    and prefix_len < len(inventory_url)
-                    and matched_url[prefix_len] == inventory_url[prefix_len]
-                ):
-                    prefix_len += 1
-
-                suffix_len = 0
-                while (
-                    suffix_len < len(matched_url) - prefix_len
-                    and suffix_len < len(inventory_url) - prefix_len
-                    and matched_url[-(suffix_len + 1)]
-                    == inventory_url[-(suffix_len + 1)]
-                ):
-                    suffix_len += 1
-
-                if prefix_len > 0 or suffix_len > 0:
-                    prefix = inventory_url[:prefix_len]
-                    middle = (
-                        inventory_url[prefix_len : len(inventory_url) - suffix_len]
-                        if suffix_len > 0
-                        else inventory_url[prefix_len:]
-                    )
-                    suffix = inventory_url[-suffix_len:] if suffix_len > 0 else ""
-                    highlighted_url = f"{YELLOW}{prefix}{YELLOW_BG}{middle}{RESET}{YELLOW}{suffix}{RESET}"
-                else:
-                    highlighted_url = f"{YELLOW_BG}{inventory_url}{RESET}"
-
-                print(f"{spaces}{highlighted_url}")
-
-        if ctx_before_tokens_old or ctx_before_tokens_new:
-            if ctx_before_tokens_old != ctx_before_tokens_new:
-                print(
-                    format_tokens(
-                        ctx_before_tokens_new,
-                        "     + ",
-                        defaultFG=GREEN,
-                        AddedHighlight=GREEN_BG,
-                        RemovedHighlight=RED_BG,
-                    )
-                )
-        print(
-            format_tokens(
-                target_tokens_new,
-                "     + ",
-                defaultFG=GREEN,
-                AddedHighlight=GREEN_BG,
-                RemovedHighlight=RED_BG,
-            )
-        )
-
-        if ctx_after_tokens_old or ctx_after_tokens_new:
-            if ctx_after_tokens_old != ctx_after_tokens_new:
-                print(
-                    format_tokens(
-                        ctx_after_tokens_old,
-                        "     - ",
-                        defaultFG=RED,
-                        RemovedHighlight=RED_BG,
-                    )
-                )
-                print(
-                    format_tokens(
-                        ctx_after_tokens_new,
-                        "     + ",
-                        defaultFG=GREEN,
-                        AddedHighlight=GREEN_BG,
-                        RemovedHighlight=RED_BG,
-                    )
-                )
-            else:
-                print(format_tokens(ctx_after_tokens_old, "       "))
+        if ctx_after_tokens_old:
+            print(format_tokens(ctx_after_tokens_old, "       "))
 
         print()
+        return
+
+    ctx_before_tokens_old, target_tokens_old, ctx_after_tokens_old = (
+        replacement.context_old
+    )
+    ctx_before_tokens_new, target_tokens_new, ctx_after_tokens_new = (
+        replacement.context_new
+    )
+
+    if ctx_before_tokens_old or ctx_before_tokens_new:
+        if ctx_before_tokens_old != ctx_before_tokens_new:
+            print(
+                format_tokens(
+                    ctx_before_tokens_old,
+                    "     - ",
+                    defaultFG=RED,
+                    RemovedHighlight=RED_BG,
+                )
+            )
+        else:
+            print(format_tokens(ctx_before_tokens_old, "       "))
+    print(
+        format_tokens(
+            target_tokens_old, "     - ", defaultFG=RED, RemovedHighlight=RED_BG
+        )
+    )
+
+    if replacement.inventory_url:
+        old_text = "".join(
+            str(token) for token in target_tokens_old if not isinstance(token, Added)
+        )
+        if replacement.inventory_url not in old_text:
+            https_pos = old_text.find("https://")
+            if https_pos >= 0:
+                spaces = " " * (7 + https_pos)
+            else:
+                spaces = "       "
+
+            matched_url = replacement.matched_url
+            inventory_url = replacement.inventory_url
+
+            prefix_len = 0
+            while (
+                prefix_len < len(matched_url)
+                and prefix_len < len(inventory_url)
+                and matched_url[prefix_len] == inventory_url[prefix_len]
+            ):
+                prefix_len += 1
+
+            suffix_len = 0
+            while (
+                suffix_len < len(matched_url) - prefix_len
+                and suffix_len < len(inventory_url) - prefix_len
+                and matched_url[-(suffix_len + 1)] == inventory_url[-(suffix_len + 1)]
+            ):
+                suffix_len += 1
+
+            if prefix_len > 0 or suffix_len > 0:
+                prefix = inventory_url[:prefix_len]
+                middle = (
+                    inventory_url[prefix_len : len(inventory_url) - suffix_len]
+                    if suffix_len > 0
+                    else inventory_url[prefix_len:]
+                )
+                suffix = inventory_url[-suffix_len:] if suffix_len > 0 else ""
+                highlighted_url = (
+                    f"{YELLOW}{prefix}{YELLOW_BG}{middle}{RESET}{YELLOW}{suffix}{RESET}"
+                )
+            else:
+                highlighted_url = f"{YELLOW_BG}{inventory_url}{RESET}"
+
+            print(f"{spaces}{highlighted_url}")
+
+    if ctx_before_tokens_old or ctx_before_tokens_new:
+        if ctx_before_tokens_old != ctx_before_tokens_new:
+            print(
+                format_tokens(
+                    ctx_before_tokens_new,
+                    "     + ",
+                    defaultFG=GREEN,
+                    AddedHighlight=GREEN_BG,
+                    RemovedHighlight=RED_BG,
+                )
+            )
+    print(
+        format_tokens(
+            target_tokens_new,
+            "     + ",
+            defaultFG=GREEN,
+            AddedHighlight=GREEN_BG,
+            RemovedHighlight=RED_BG,
+        )
+    )
+
+    if ctx_after_tokens_old or ctx_after_tokens_new:
+        if ctx_after_tokens_old != ctx_after_tokens_new:
+            print(
+                format_tokens(
+                    ctx_after_tokens_old,
+                    "     - ",
+                    defaultFG=RED,
+                    RemovedHighlight=RED_BG,
+                )
+            )
+            print(
+                format_tokens(
+                    ctx_after_tokens_new,
+                    "     + ",
+                    defaultFG=GREEN,
+                    AddedHighlight=GREEN_BG,
+                    RemovedHighlight=RED_BG,
+                )
+            )
+        else:
+            print(format_tokens(ctx_after_tokens_old, "       "))
+
+    print()

@@ -99,7 +99,15 @@ def main():
         "directory",
         help="Directory to search for .rst files",
     )
-    rev_search_parser.set_defaults(func=lambda args: rev_search(args.directory))
+    rev_search_parser.add_argument(
+        "-i",
+        "--interactive",
+        action="store_true",
+        help="Interactively review each URL replacement before applying",
+    )
+    rev_search_parser.set_defaults(
+        func=lambda args: rev_search(args.directory, interactive=args.interactive)
+    )
 
     clear_cache_parser = subparsers.add_parser(
         "clear-cache",
