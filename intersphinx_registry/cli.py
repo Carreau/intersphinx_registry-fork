@@ -3,7 +3,7 @@ from typing import List, Optional
 
 import typer
 
-from intersphinx_registry import __version__
+from intersphinx_registry import __version__, _get_all_mappings
 from intersphinx_registry.lookup import clear_cache, lookup_packages, print_info
 from intersphinx_registry.reverse_lookup import reverse_lookup
 from intersphinx_registry.rev_search import rev_search
@@ -26,6 +26,24 @@ def version_callback(value: bool):
         raise typer.Exit()
 
 
+def complete_package_names(incomplete: str):
+    """
+    Provide completion suggestions for package names.
+
+    This function returns package names from the registry that match
+    the incomplete string provided by the user.
+    """
+    try:
+        all_packages = sorted(_get_all_mappings().keys())
+        # Filter packages that start with the incomplete string
+        for name in all_packages:
+            if name.startswith(incomplete.lower()):
+                yield name
+    except Exception:
+        # If we can't get the registry, just don't provide completions
+        pass
+
+
 @app.callback()
 def main(
     version: Optional[bool] = typer.Option(
@@ -46,6 +64,7 @@ def lookup(
     packages: Optional[str] = typer.Argument(
         None,
         help="Comma-separated list of package names (e.g., numpy,scipy)",
+        autocompletion=complete_package_names,
     ),
     search_term: Optional[str] = typer.Argument(
         None,
